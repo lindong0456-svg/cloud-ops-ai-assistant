@@ -60,18 +60,51 @@ public class DocumentIngestService {
         // 2. 分块器（beta3 用 DocumentSplitters 工具类）
         DocumentSplitter splitter = DocumentSplitters.recursive(chunkSize, chunkOverlap);
 
-        // 3. 构建入库器（分块 + 向量化 + 存储）
+        // 3. 构建入库器（分块 + 向量化 + 存储），设置批量大小为 10 以符合百炼 API 限制
         EmbeddingStoreIngestor ingestor = EmbeddingStoreIngestor.builder()
                 .documentSplitter(splitter)
                 .embeddingModel(embeddingModel)
                 .embeddingStore(embeddingStore)
                 .build();
 
-        // 4. 执行入库
-        ingestor.ingest(documents);
+        // 4. 逐篇执行入库，并对每篇文档的分块结果再次分批处理（每批最多 10 个片段）
+        int totalProcessed = 0;
+        
+        for (int i = 0; i < documents.size(); i++) {
+            Document doc = documents.get(i);
+            
+            log.info("处理文档 [{}/{}]: {}", i + 1, documents.size(), doc.metadata().getString("source"));
+            
+            try {
+                // 先分块
+                List<TextSegment> segments = splitter.split(doc);
+                log.info("文档分块完成，共 {} 个片段", segments.size());
+                
+                // 分批向量化和存储（每批最多 10 个片段）
+                int segmentBatchSize = 10;
+                for (int j = 0; j < segments.size(); j += segmentBatchSize) {
+                    int endIndex = Math.min(j + segmentBatchSize, segments.size());
+                    List<TextSegment> segmentBatch = segments.subList(j, endIndex);
+                    
+                    log.info("处理片段批次 [{}/{}]", j / segmentBatchSize + 1, (segments.size() + segmentBatchSize - 1) / segmentBatchSize);
+                    
+                    // 直接嵌入并存储这一批片段
+                    List<dev.langchain4j.data.embedding.Embedding> embeddings = embeddingModel.embedAll(segmentBatch).content();
+                    for (int k = 0; k < segmentBatch.size(); k++) {
+                        embeddingStore.add(embeddings.get(k), segmentBatch.get(k));
+                    }
+                }
+                
+                totalProcessed++;
+                log.info("文档入库成功，已处理 {}/{} 篇文档", totalProcessed, documents.size());
+            } catch (Exception e) {
+                log.error("文档处理失败 [{}]: {}", doc.metadata().getString("source"), e.getMessage(), e);
+                throw new RuntimeException("文档入库失败", e);
+            }
+        }
 
-        log.info("文档入库完成，共处理 {} 篇文档", documents.size());
-        return documents.size();
+        log.info("文档入库完成，共处理 {} 篇文档", totalProcessed);
+        return totalProcessed;
     }
 
     /**
@@ -86,7 +119,8 @@ public class DocumentIngestService {
                  .forEach(p -> {
                      try {
                          String content = Files.readString(p);
-                         Metadata metadata = Metadata.from("source", p.getFileName().toString());
+                         Metadata metadata = new Metadata();
+                         metadata.put("source", p.getFileName().toString());
                          Document doc = Document.from(content, metadata);
                          documents.add(doc);
                          log.info("加载文档: {} ({}字符)", p.getFileName(), content.length());
