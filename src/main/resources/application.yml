@@ -1,0 +1,65 @@
+# ===========================================
+# 云运维智能助手 - 应用配置
+# ===========================================
+server:
+  port: 8080
+
+spring:
+  application:
+    name: cloud-ops-ai-assistant
+
+  # MySQL 数据源（Mock 业务数据）
+  datasource:
+    url: jdbc:mysql://localhost:3306/cloud_ops?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+# ===========================================
+# 大模型配置
+# 对话模型：DeepSeek（OpenAI 兼容格式）
+# 向量模型：阿里云百炼 text-embedding-v4（DashScope，OpenAI 兼容格式）
+# key 都用环境变量，绝不硬编码
+# ===========================================
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: https://api.deepseek.com
+      model-name: deepseek-v4-pro
+      temperature: 0.7
+      max-tokens: 4096
+      log-requests: true
+      log-responses: false
+    embedding-model:
+      api-key: ${DASHSCOPE_API_KEY}
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model-name: text-embedding-v4
+
+# ===========================================
+# Milvus 向量库配置
+# ===========================================
+milvus:
+  host: localhost
+  port: 19530
+  collection-name: ops_knowledge
+
+# ===========================================
+# MyBatis-Plus
+# ===========================================
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+
+# ===========================================
+# RAG 配置
+# chunk-size: 按字符数切，800 约等于 400-500 汉字，一段完整 SOP 步骤
+# chunk-overlap: 150 保证上下文不断裂，排障步骤跨块时能接上
+# top-k: 检索 5 条，经 Rerank 后取 top-3 给模型
+# ===========================================
+rag:
+  chunk-size: 800
+  chunk-overlap: 150
+  top-k: 5
+  rerank-top-k: 3
