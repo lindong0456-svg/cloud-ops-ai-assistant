@@ -4,6 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- 继承 Spring Boot Parent，统一 Spring 全家桶版本 -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -12,10 +13,22 @@
     </parent>
 
     <groupId>com.cloudops</groupId>
-    <artifactId>cloud-ops-ai-assistant</artifactId>
+    <artifactId>cloud-ops-parent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>cloud-ops-ai-assistant</name>
-    <description>云运维智能助手 - Java AI Agent 项目</description>
+    <packaging>pom</packaging>
+    <name>cloud-ops-parent</name>
+    <description>云运维智能助手 - Java AI Agent 项目（父 POM）</description>
+
+    <!-- 子模块声明顺序 = 构建顺序（被依赖的模块要在前面） -->
+    <!-- 依赖链：app → agent → skill → domain → common；app → rag → common -->
+    <modules>
+        <module>cloud-ops-common</module>
+        <module>cloud-ops-domain</module>
+        <module>cloud-ops-rag</module>
+        <module>cloud-ops-skill</module>
+        <module>cloud-ops-agent</module>
+        <module>cloud-ops-app</module>
+    </modules>
 
     <properties>
         <java.version>21</java.version>
@@ -23,71 +36,7 @@
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
     </properties>
 
-    <dependencies>
-        <!-- Spring Boot Web（REST 接口） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-
-        <!-- Spring Boot WebFlux（SSE 流式输出需要） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
-
-        <!-- LangChain4j 核心 + Spring Boot 自动配置 -->
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-spring-boot-starter</artifactId>
-            <version>${langchain4j.version}</version>
-        </dependency>
-
-        <!-- LangChain4j OpenAI 兼容模型（DeepSeek 对话 + 百炼向量都走这个） -->
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
-            <version>${langchain4j.version}</version>
-        </dependency>
-
-        <!-- LangChain4j Milvus 向量库 -->
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-milvus</artifactId>
-            <version>${langchain4j.version}</version>
-        </dependency>
-
-        <!-- MyBatis-Plus（Mock 业务数据查询） -->
-        <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
-
-        <!-- MySQL 驱动 -->
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- Lombok -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.36</version>
-            <optional>true</optional>
-        </dependency>
-
-        <!-- 测试 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-
+    <!-- 统一版本管理：子模块引用时不用写 version -->
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -97,23 +46,34 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- 内部模块版本统一管理 -->
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-rag</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-skill</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
 </project>
