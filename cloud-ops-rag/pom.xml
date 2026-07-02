@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudops</groupId>
+        <artifactId>cloud-ops-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>cloud-ops-rag</artifactId>
+    <name>cloud-ops-rag</name>
+    <description>RAG 模块：文档入库 + 向量检索服务 + KnowledgeRetrievalTool</description>
+
+    <dependencies>
+        <!-- 依赖 common：KnowledgeRetrievalTool 需要 AbstractTool -->
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-common</artifactId>
+        </dependency>
+
+        <!-- LangChain4j 核心 + Spring Boot 自动配置 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- LangChain4j OpenAI 兼容模型（DeepSeek 对话 + 百炼向量） -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- LangChain4j Milvus 向量库 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-milvus</artifactId>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.36</version>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+</project>

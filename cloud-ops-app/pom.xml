@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudops</groupId>
+        <artifactId>cloud-ops-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>cloud-ops-app</artifactId>
+    <name>cloud-ops-app</name>
+    <description>启动模块：Spring Boot 启动类 + Web Controller，聚合所有子模块</description>
+
+    <dependencies>
+        <!-- 聚合所有业务子模块 -->
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-rag</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-skill</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-agent</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Web（REST 接口） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot WebFlux（SSE 流式输出需要） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.36</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 只有 app 模块需要打成可执行 jar -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * 健康检查接口
  * 作用：验证项目能启动、依赖能加载
- * 面试演示前先调这个接口确认服务活着
+ * 先调这个接口确认服务活着
  */
 @RestController
 public class HealthController {
