@@ -3,8 +3,24 @@
 # ===========================================
 server:
   port: 8080
+  # ★ 禁用响应压缩，避免 SSE 被缓冲
+  compression:
+    enabled: false
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  tomcat:
+    threads:
+      max: 200
+    # 异步请求超时设为 -1（永不超时），SSE 长连接需要
+    connection-timeout: -1
 
 spring:
+  mvc:
+    async:
+      # SSE 长连接超时：设为 -1 表示不超时（默认 30 秒会导致长对话断开）
+      request-timeout: -1
   application:
     name: cloud-ops-ai-assistant
 
@@ -14,6 +30,12 @@ spring:
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # 加载额外的 yml 配置文件（护轨配置 + Tool注册配置）
+  config:
+    import:
+      - "classpath:guardrail-config.yml"
+      - "classpath:tools-config.yml"
 
 # ===========================================
 # 大模型配置

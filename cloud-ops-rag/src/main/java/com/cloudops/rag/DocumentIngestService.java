@@ -90,9 +90,8 @@ public class DocumentIngestService {
                     
                     // 直接嵌入并存储这一批片段
                     List<dev.langchain4j.data.embedding.Embedding> embeddings = embeddingModel.embedAll(segmentBatch).content();
-                    for (int k = 0; k < segmentBatch.size(); k++) {
-                        embeddingStore.add(embeddings.get(k), segmentBatch.get(k));
-                    }
+                    // 一次批量写入，1 次网络请求
+                    embeddingStore.addAll(embeddings, segmentBatch);
                 }
                 
                 totalProcessed++;

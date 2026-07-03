@@ -1,0 +1,21 @@
+# ===========================================
+# ToolRegistry 配置 — 配置驱动 Tool 注册
+# ===========================================
+# 通过 YAML 配置决定 Agent 启用哪些 Tool
+# 增减 Tool 只改这个文件，不改代码
+# ===========================================
+
+tools:
+  # 是否启用配置驱动模式（false=全量注册所有 Tool）
+  config-driven: true
+
+  # 启用的 Tool 列表（按 Bean 名称匹配）
+  # 对应 Spring Bean 名称（类名首字母小写）
+  enabled:
+    - alarmQueryTool           # 告警查询
+    - resourceRelationTool     # 资源拓扑
+    - resourceLoadTool         # 负载查询
+    - billingQueryTool         # 账单查询
+    - knowledgeRetrievalTool   # 知识检索（RAG）
+  # 注释掉即停用，例如排障 Demo 不需要账单：
+  # - billingQueryTool         # 成本优化场景再开

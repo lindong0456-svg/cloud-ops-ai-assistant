@@ -34,6 +34,12 @@
             <artifactId>langchain4j-spring-boot-starter</artifactId>
         </dependency>
 
+        <!-- LangChain4j Reactor 支持（Flux<String> 流式返回需要） -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-reactor</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
