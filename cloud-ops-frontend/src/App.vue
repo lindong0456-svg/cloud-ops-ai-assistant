@@ -17,28 +17,10 @@
         <span>✨</span><span>新建对话</span>
       </button>
 
-      <div class="sidebar-section">
-        <div class="section-header section-header--collapsible" @click="toggleQuickActions">
-          <h3>快捷操作</h3>
-          <span :class="{ expanded: isQuickActionsExpanded }" class="collapse-icon">▶</span>
-        </div>
-        <div v-show="isQuickActionsExpanded" class="tools-content">
-          <button
-            v-for="item in quickActions"
-            :key="item.text"
-            :class="{ active: lastQuickAction === item.text }"
-            :disabled="streaming"
-            class="quick-btn"
-            @click="sendMessage(item.text)"
-          >
-            <span class="icon">{{ item.icon }}</span><span>{{ item.label }}</span>
-          </button>
-        </div>
-      </div>
-
+      <!-- 实时告警区（提至快捷操作上方，日常使用最关注） -->
       <div class="sidebar-section sidebar-section--alarms">
         <div class="section-header">
-          <h3>实时告警</h3>
+          <h3>实时告警 <span v-if="alarms.length > 0" class="alarm-count-badge">{{ alarms.length }}</span></h3>
           <button :disabled="streaming" class="refresh-btn" title="刷新告警" @click="fetchAlarms">↻</button>
         </div>
         <!-- 告警加载中 -->
@@ -74,6 +56,49 @@
         <!-- 无告警 -->
         <div v-else class="alarm-empty">
           <span>✅ 暂无未处理告警</span>
+        </div>
+      </div>
+
+      <!-- 快捷操作 -->
+      <div class="sidebar-section">
+        <div class="section-header section-header--collapsible" @click="toggleQuickActions">
+          <h3>快捷操作</h3>
+          <span :class="{ expanded: isQuickActionsExpanded }" class="collapse-icon">▶</span>
+        </div>
+        <div v-show="isQuickActionsExpanded" class="tools-content">
+          <button
+            v-for="item in quickActions"
+            :key="item.text"
+            :class="{ active: lastQuickAction === item.text }"
+            :disabled="streaming"
+            class="quick-btn"
+            @click="sendMessage(item.text)"
+          >
+            <span class="icon">{{ item.icon }}</span><span>{{ item.label }}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 历史对话列表 -->
+      <div v-if="sessions.length > 0" class="sidebar-section sidebar-section--history">
+        <div class="section-header section-header--collapsible" @click="toggleHistory">
+          <h3>历史对话</h3>
+          <span :class="{ expanded: isHistoryExpanded }" class="collapse-icon">▶</span>
+        </div>
+        <div v-show="isHistoryExpanded" class="history-list">
+          <div
+            v-for="s in sessions"
+            :key="s.id"
+            :class="{ active: s.id === currentSessionId }"
+            class="history-item"
+            @click="switchSession(s.id)"
+          >
+            <div class="history-title">{{ s.title || '新对话' }}</div>
+            <div class="history-meta">
+              <span class="history-time">{{ formatTime(s.createdAt) }}</span>
+              <button class="history-del" title="删除" @click.stop="deleteSession(s.id)">✕</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -154,36 +179,73 @@
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '我' : '运维助手' }}</div>
             <div v-if="msg.role === 'assistant'" class="react-container">
-              <!-- ★ 流式期间：轻量纯文本显示（不做 ReAct 解析 + Markdown 编译）
-                   原因：每来一个 token 都全文 parse+compile 会阻塞 UI 主线程，
-                         Vue 合并多次 DOM 更新 → 用户看到"攒一堆后突然全出"
-                  -->
-              <div v-if="msg.streaming" class="streaming-text">{{ msg.content }}<span class="streaming-cursor">|</span></div>
+              <!--
+                ★ 流式期间：混合渲染模式
+                - 已闭合段落（后面出现了新标记）：渲染为 ReAct 卡片/Markdown，内容不再变
+                - 最后一段（正在生成中）：保持为轻量纯文本，避免每 token 重新 parse+compile
+                效果：卡片逐步"长出来"，最后一段平滑过渡到完成态，不会出现整体跳变
+              -->
+              <template v-if="msg.streaming">
+                <!-- 工具执行中提示（排障过程透明化） -->
+                <div v-if="currentTool" class="tool-progress">
+                  <span class="tool-progress-icon">🔧</span>
+                  <span class="tool-progress-text">正在调用 <strong>{{ currentTool }}</strong>…</span>
+                  <span class="tool-progress-dots"><span>.</span><span>.</span><span>.</span></span>
+                </div>
+                <!-- 已闭合段落 → ReAct 卡片 / Markdown 渲染 -->
+                <template v-for="(section, sIdx) in getStreamingParsed(msg.content).completed" :key="'sc-' + sIdx">
+                  <div v-if="section.type === 'thinking'" class="react-card react-card--thinking stream-card">
+                    <div class="react-card-label">🧠 思考</div>
+                    <div class="react-card-content">{{ section.content }}</div>
+                  </div>
+                  <div v-else-if="section.type === 'tool'" class="react-card react-card--tool stream-card">
+                    <div class="react-card-label">🔧 工具调用</div>
+                    <code class="react-card-content react-code">{{ section.content }}</code>
+                  </div>
+                  <div v-else-if="section.type === 'observation'" class="react-card react-card--observation stream-card">
+                    <div class="react-card-label">📊 观察结果</div>
+                    <div class="react-card-content">{{ section.content }}</div>
+                  </div>
+                  <div v-else class="markdown-body stream-card" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+                </template>
+                <!-- 最后一段（正在生成）→ 轻量纯文本 + 光标 -->
+                <div v-if="getStreamingParsed(msg.content).current" class="streaming-text">
+                  <span v-if="getStreamingParsed(msg.content).current!.type !== 'text'" class="streaming-label">{{ markerLabel(getStreamingParsed(msg.content).current!.type) }}</span>
+                  {{ getStreamingParsed(msg.content).current!.content }}<span class="streaming-cursor">|</span>
+                </div>
+                <div v-else class="streaming-text"><span class="streaming-cursor">|</span></div>
+              </template>
 
               <!-- ★ 完成/历史消息：完整 ReAct 卡片 + Markdown 渲染 -->
-              <template v-for="(section, sIdx) in parseReActSections(msg.content)" v-else :key="sIdx">
-                <!-- 思考卡片 -->
-                <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
-                  <div class="react-card-label">🧠 思考</div>
-                  <div class="react-card-content">{{ section.content }}</div>
-                </div>
-                <!-- 工具调用卡片 -->
-                <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
-                  <div class="react-card-label">🔧 工具调用</div>
-                  <code class="react-card-content react-code">{{ section.content }}</code>
-                </div>
-                <!-- 观察结果卡片 -->
-                <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
-                  <div class="react-card-label">📊 观察结果</div>
-                  <div class="react-card-content">{{ section.content }}</div>
-                </div>
-                <!-- 结论 / 纯文本：Markdown 渲染 -->
-                <div v-else class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+              <template v-else>
+                <template v-for="(section, sIdx) in parseReActSections(msg.content)" :key="'done-' + sIdx">
+                  <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
+                    <div class="react-card-label">🧠 思考</div>
+                    <div class="react-card-content">{{ section.content }}</div>
+                  </div>
+                  <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
+                    <div class="react-card-label">🔧 工具调用</div>
+                    <code class="react-card-content react-code">{{ section.content }}</code>
+                  </div>
+                  <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
+                    <div class="react-card-label">📊 观察结果</div>
+                    <div class="react-card-content">{{ section.content }}</div>
+                  </div>
+                  <div v-else class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+                </template>
               </template>
             </div>
             <div v-else class="text-content">{{ msg.content }}</div>
             <div v-if="msg.streaming" class="typing-indicator"><span></span><span></span><span></span></div>
-            <!-- T29: 下载报告按钮 — 仅在排障结论上显示（含 ReAct 标记的消息） -->
+            <!-- 流式断开后的重试按钮 -->
+            <button
+              v-if="needsRetry && msg.role === 'assistant' && !msg.streaming && index === messages.length - 1"
+              class="retry-btn"
+              @click="retrySend"
+            >
+              🔄 重新连接
+            </button>
+            <!-- T29: 下载报告按钮 -->
             <button
               v-if="msg.role === 'assistant' && !msg.streaming && msg.content && isTroubleshootReport(msg.content)"
               class="download-report-btn"
@@ -201,10 +263,11 @@
           <textarea
             v-model="inputText"
             :disabled="streaming"
-            placeholder="描述告警或问题，如：ecs-001 的 CPU 高怎么办？"
+            placeholder="描述告警或问题… Enter 发送 · Shift+Enter 换行"
             rows="1"
             @input="autoResize"
             @keydown.enter.exact.prevent="handleSend"
+            @keydown.shift.enter.prevent="inputText += '\n'"
           ></textarea>
           <!-- 生成中显示停止按钮，否则显示发送按钮 -->
           <button v-if="streaming" class="send-btn stop-btn" @click="stopGeneration">
@@ -257,19 +320,27 @@ const backendOnline = ref(false)
 const messagesRef = ref<HTMLElement>()
 const lastQuickAction = ref('')
 const toast = ref('')
+// 工具执行进度：排障过程透明化
+const currentTool = ref('')
+// 流式连接断开后的重试信息
+const needsRetry = ref(false)
+const retryMessage = ref('')
+const retryUserId = ref('')
+
 // 工具能力折叠面板状态（默认收起）
 const isToolsExpanded = ref(false)
-function toggleTools() {
-  isToolsExpanded.value = !isToolsExpanded.value
-}
+function toggleTools() { isToolsExpanded.value = !isToolsExpanded.value }
 
 // 快捷操作折叠：默认折叠，腾出空间给告警区域
 const isQuickActionsExpanded = ref(false)
-function toggleQuickActions() {
-  isQuickActionsExpanded.value = !isQuickActionsExpanded.value
-}
+function toggleQuickActions() { isQuickActionsExpanded.value = !isQuickActionsExpanded.value }
+
+// 历史对话折叠（默认展开）
+const isHistoryExpanded = ref(true)
+function toggleHistory() { isHistoryExpanded.value = !isHistoryExpanded.value }
+
 const userId = 'web-user-' + Math.random().toString(36).substring(2, 8)
-// SSE 连接：EventSource 直连后端，绕过 Vite proxy 避免 SSE 缓冲
+// SSE 连接：EventSource 直连后端
 let eventSource: EventSource | null = null
 
 const quickActions = [
@@ -278,6 +349,74 @@ const quickActions = [
   { icon: '🧠', label: '内存排查', text: 'ebm-001 是不是内存泄漏？' },
   { icon: '💰', label: '成本优化', text: 'gpu-002 成本优化建议' }
 ]
+
+// ========== 对话历史管理（localStorage 持久化） ==========
+interface ChatSession {
+  id: string
+  title: string
+  messages: Array<{ role: string; content: string; streaming?: boolean }>
+  createdAt: number
+}
+const STORAGE_KEY = 'cloud-ops-sessions'
+const currentSessionId = ref('')
+const sessions = ref<ChatSession[]>(loadSessions())
+
+function loadSessions(): ChatSession[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+  } catch { return [] }
+}
+function saveSessions() {
+  // 只保留 messages 的基本信息（strip streaming flag）
+  const clean = sessions.value.map(s => ({
+    ...s,
+    messages: s.messages.map(m => ({ role: m.role, content: m.content }))
+  }))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(clean))
+}
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+function archiveCurrentSession() {
+  if (messages.value.length === 0) return
+  const firstUser = messages.value.find(m => m.role === 'user')
+  const title = firstUser ? (firstUser.content || '').slice(0, 30) : '新对话'
+  // 更新已有 session 或新建
+  const existing = sessions.value.find(s => s.id === currentSessionId.value)
+  if (existing) {
+    existing.messages = [...messages.value]
+    existing.title = title
+  } else {
+    currentSessionId.value = 'sess-' + Date.now()
+    sessions.value.unshift({
+      id: currentSessionId.value,
+      title,
+      messages: [...messages.value],
+      createdAt: Date.now()
+    })
+  }
+  // 最多保留 20 条历史
+  if (sessions.value.length > 20) sessions.value = sessions.value.slice(0, 20)
+  saveSessions()
+}
+function switchSession(id: string) {
+  if (streaming.value) return
+  archiveCurrentSession()
+  const s = sessions.value.find(x => x.id === id)
+  if (s) {
+    currentSessionId.value = s.id
+    messages.value = s.messages.map(m => ({ ...m, streaming: false }))
+  }
+}
+function deleteSession(id: string) {
+  sessions.value = sessions.value.filter(s => s.id !== id)
+  if (currentSessionId.value === id) {
+    currentSessionId.value = ''
+    messages.value = []
+  }
+  saveSessions()
+}
 
 // Markdown 渲染器：启用表格、链接、代码高亮
 const md = new MarkdownIt({
@@ -409,6 +548,79 @@ function parseReActSections(raw: string): ReActSection[] {
 }
 
 /**
+ * 流式渲染专用的混合解析器
+ *
+ * 与 parseReActSections 不同，它区分「已闭合段落」和「正在写的段落」：
+ *   - 已闭合段落：该段落后面出现了新的标记（【思考】→【工具调用】说明思考已写完）
+ *     → 渲染为 ReAct 卡片，内容稳定不再变化
+ *   - 最后一段：没有后续标记 → 仍在流式生成中
+ *     → 保持为轻量纯文本 + 光标
+ *
+ * 这样做的好处：
+ *   1. 已完成段落提前以卡片形式展示，视觉上逐步构建
+ *   2. 只有最后一段是纯文本，Markdown 编译延迟到该段闭合后才触发
+ *   3. 流式完成时，最后一段加入已完成列表，过渡自然
+ */
+function getStreamingParsed(raw: string): { completed: ReActSection[]; current: ReActSection | null } {
+  if (!raw) return { completed: [], current: null }
+
+  const markerPattern = /【思考】|【工具调用】|【观察】|【结论】/g
+  const parts = raw.split(markerPattern)
+  const matches = raw.match(markerPattern) || []
+
+  const completed: ReActSection[] = []
+  let current: ReActSection | null = null
+
+  // 处理第一个标记之前的文本
+  if (parts[0] && parts[0].trim()) {
+    if (matches.length > 0) {
+      // 后面有标记 → 这段已闭合
+      completed.push({ type: 'text', content: parts[0].trim() })
+    } else {
+      // 没有标记 → 全部内容都在流式中
+      current = { type: 'text', content: parts[0] }
+      return { completed, current }
+    }
+  }
+
+  // 处理每个标记 + 内容对
+  for (let i = 0; i < matches.length; i++) {
+    const marker = matches[i]
+    const content = (parts[i + 1] || '')
+    const type = REACT_MARKERS[marker] || 'text'
+
+    if (i < matches.length - 1) {
+      // 不是最后一个标记 → 该段已闭合
+      const trimmed = content.trim()
+      if (trimmed) {
+        completed.push({ type, content: trimmed })
+      }
+    } else {
+      // 最后一个标记 → 正在生成中
+      // conclusion 即使为空也保留（标记本身可能刚出现）
+      if (content || type === 'conclusion') {
+        current = { type, content }
+      }
+    }
+  }
+
+  return { completed, current }
+}
+
+/**
+ * 流式段落标签映射
+ */
+function markerLabel(type: SectionType): string {
+  const labels: Record<string, string> = {
+    thinking: '🧠 思考中…',
+    tool: '🔧 调用中…',
+    observation: '📊 观察中…',
+    conclusion: '📝 结论中…',
+  }
+  return labels[type] || ''
+}
+
+/**
  * 判断一条消息是否是排障结论（应该显示"下载报告"按钮）
  *
  * 判断依据：消息内容包含 ReAct 推理标记（【思考】/【工具调用】/【观察】/【结论】）。
@@ -425,13 +637,13 @@ function showToast(msg: string) {
 }
 
 function newChat() {
-  if (streaming.value) {
-    showToast('请等待当前回复完成')
-    return
-  }
+  if (streaming.value) { showToast('请等待当前回复完成'); return }
+  archiveCurrentSession()
+  currentSessionId.value = ''
   messages.value = []
   lastQuickAction.value = ''
   inputText.value = ''
+  needsRetry.value = false
   showToast('已开启新对话')
 }
 
@@ -443,74 +655,101 @@ function autoResize() {
   el.style.height = Math.min(el.scrollHeight, 160) + 'px'
 }
 
-async function sendMessage(text: string) {
-  if (streaming.value) {
-    showToast('正在生成中，请稍候...')
-    return
-  }
+async function sendMessage(text: string, isRetry = false) {
+  if (streaming.value && !isRetry) { showToast('正在生成中，请稍候...'); return }
   if (!text.trim()) return
 
   const message = text.trim()
-  inputText.value = ''
-  nextTick(autoResize)
-  messages.value.push({ role: 'user', content: message })
-  // ★ 必须用 reactive() 包装：push 进 ref 数组后，
-  //   数组内存的是代理对象，但 aiMessage 变量指向原始对象，
-  //   直接改原始对象的 content 属性不会触发响应式更新 → 全部 token 攒到 [DONE] 才一次性渲染
-  //   用 reactive() 让 aiMessage 本身就是代理对象，改 content 立即触发视图更新
-  const aiMessage = reactive({ role: 'assistant', content: '', streaming: true })
-  messages.value.push(aiMessage)
+  if (!isRetry) {
+    inputText.value = ''
+    nextTick(autoResize)
+    messages.value.push({ role: 'user', content: message })
+  }
+  // 重试时复用已有的 aiMessage，否则新建
+  let aiMessage = isRetry
+    ? messages.value[messages.value.length - 1]
+    : null
+  if (!aiMessage || aiMessage.role !== 'assistant' || !aiMessage.streaming) {
+    aiMessage = reactive({ role: 'assistant', content: isRetry ? messages.value[messages.value.length - 1]?.content || '' : '', streaming: true })
+    if (!isRetry) messages.value.push(aiMessage)
+  }
+  aiMessage.streaming = true
   streaming.value = true
+  needsRetry.value = false
+  retryMessage.value = ''
+  currentTool.value = ''
   const matched = quickActions.find(a => a.text === message)
   lastQuickAction.value = matched ? matched.text : ''
   await scrollToBottom()
 
-  // ★ 直连后端，绕过 Vite proxy（http-proxy 会缓冲 SSE 响应）
-  const url = 'http://localhost:8080/api/agent/chat/stream?userId=' + userId + '&message=' + encodeURIComponent(message)
+  if (!isRetry) retryMessage.value = message
+  if (!isRetry) retryUserId.value = userId
 
+  const url = 'http://localhost:8080/api/agent/chat/stream?userId=' + userId + '&message=' + encodeURIComponent(message)
   eventSource = new EventSource(url)
 
+  // ★ SSE 结构化事件处理（token / tool-start / tool-end / done / error）
   eventSource.onmessage = function (event) {
-    // 后端 JSON 编码每个 token，避免 \n 破坏 SSE 分行
-    let data: string
+    let evt: { type: string; content?: string; toolName?: string; args?: string; result?: string; message?: string }
     try {
-      data = JSON.parse(event.data)
+      evt = JSON.parse(event.data)
     } catch {
-      data = event.data
+      return // 忽略无法解析的数据
     }
-    if (data === '[DONE]') {
-      aiMessage.streaming = false
-      streaming.value = false
-      backendOnline.value = true
-      eventSource?.close()
-      eventSource = null
-      return
+
+    switch (evt.type) {
+      case 'token':
+        aiMessage.content += (evt.content || '')
+        scrollToBottom()
+        break
+      case 'tool-start':
+        currentTool.value = evt.toolName || ''
+        break
+      case 'tool-end':
+        currentTool.value = ''
+        break
+      case 'done':
+        aiMessage.streaming = false
+        streaming.value = false
+        backendOnline.value = true
+        currentTool.value = ''
+        archiveCurrentSession()
+        eventSource?.close()
+        eventSource = null
+        break
+      case 'error':
+        aiMessage.content += '\n\n> ⚠️ ' + (evt.message || '')
+        break
     }
-    if (data.startsWith('[ERROR]')) {
-      aiMessage.content += '\n\n> ⚠️ ' + data
-    } else if (data.startsWith('[护轨拦截]')) {
-      aiMessage.content += '> ⚠️ ' + data
-    } else {
-      aiMessage.content += data
-    }
-    scrollToBottom()
   }
 
   eventSource.onerror = function () {
     if (aiMessage.streaming) {
-      // 连接异常断开
+      // 连接异常断开 → 显示重试按钮
+      streaming.value = false
+      currentTool.value = ''
+      needsRetry.value = true
+      aiMessage.streaming = false
       if (aiMessage.content === '') {
         aiMessage.content = '> ⚠️ 连接失败，请确认后端服务已启动（localhost:8080）'
         backendOnline.value = false
-      } else {
-        aiMessage.content += '\n\n> ⚠️ 连接已断开'
+        needsRetry.value = false
       }
-      aiMessage.streaming = false
-      streaming.value = false
     }
     eventSource?.close()
     eventSource = null
   }
+}
+
+/** 重试：用之前的问题重新连接 */
+function retrySend() {
+  if (!retryMessage.value) return
+  // 移除最后一条 assistant 消息（如果有的话，保留前缀内容）
+  const last = messages.value[messages.value.length - 1]
+  if (last && last.role === 'assistant') {
+    last.content = last.content.replace(/\n\n> ⚠️ 连接已断开.*$/, '')
+  }
+  sendMessage(retryUserId.value ? retryMessage.value : retryMessage.value, true)
 }
 
 // 停止生成
@@ -524,6 +763,9 @@ function stopGeneration() {
       last.streaming = false
     }
     streaming.value = false
+    currentTool.value = ''
+    needsRetry.value = false
+    archiveCurrentSession()
     showToast('已停止生成')
   }
 }
@@ -705,8 +947,9 @@ function downloadReport(content: string, index: number) {
 }
 
 onMounted(async () => {
-  // ESC 关闭弹窗
+  // 全局键盘事件
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keydown', onGlobalShortcut)
   // 拉取告警列表
   fetchAlarms()
   try {
@@ -716,6 +959,28 @@ onMounted(async () => {
     backendOnline.value = false
   }
 })
+
+/** 全局快捷键：Ctrl+K 新建对话 · Ctrl+/ 聚焦输入框 · Ctrl+Enter 发送 */
+function onGlobalShortcut(e: KeyboardEvent) {
+  const target = e.target as HTMLElement
+  const isInput = target.tagName === 'TEXTAREA' || target.tagName === 'INPUT'
+  // Ctrl+K：新建对话
+  if (e.ctrlKey && e.key === 'k') {
+    e.preventDefault()
+    newChat()
+  }
+  // Ctrl+/：聚焦输入框
+  if (e.ctrlKey && e.key === '/') {
+    e.preventDefault()
+    const el = document.querySelector('.input-wrapper textarea') as HTMLTextAreaElement | null
+    el?.focus()
+  }
+  // Ctrl+Enter：发送（当焦点在输入框时）
+  if (e.ctrlKey && e.key === 'Enter' && isInput) {
+    e.preventDefault()
+    handleSend()
+  }
+}
 </script>
 
 <style scoped>

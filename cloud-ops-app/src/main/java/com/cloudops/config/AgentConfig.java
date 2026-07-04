@@ -21,19 +21,16 @@ import java.util.List;
 /**
  * Agent 配置类 — 用 AiServices.builder 构建 OpsAssistant 代理实例
  *
- * 阶段5 新增：StreamingChatLanguageModel（流式对话模型）
- *   OpsAssistant 接口新增 chatStream() 方法，返回 Flux<String>
- *   LangChain4j 原生支持 Flux 返回类型，绑定 StreamingChatLanguageModel 即可
+ * 流式方案：OpsAssistant.chatStream() 返回 TokenStream（AiServices 原生支持），
+ *   Controller 层用 Flux.create() 将 TokenStream 的回调桥接到 Flux<String>。
+ *   比 Flux<String> 作为返回类型更可靠，不依赖 langchain4j-reactor SPI 适配器的版本行为。
  *
  * 为什么用两个 Model Bean：
  *   - ChatLanguageModel（同步）：给 chat() 方法用
  *   - StreamingChatLanguageModel（流式）：给 chatStream() 方法用
- *   AiServices 代理根据返回类型自动选模型
- *   LangChain4j 的 AiServices 会根据返回类型自动选择用哪个 Model
- *
- * 对标联通：
- *   联通报表导出有同步（@Async线程池）和流式（SXSSF流式写入）两种模式；
- *   这里 Agent 也有同步和流式两种模式，按场景选。
+ *   AiServices 代理根据返回类型自动选模型：
+ *     String       → ChatLanguageModel
+ *     TokenStream  → StreamingChatLanguageModel
  */
 @Slf4j
 @Configuration
@@ -41,9 +38,6 @@ import java.util.List;
 public class AgentConfig {
 
     private final ChatLanguageModel chatLanguageModel;
-
-    // 阶段5: 流式对话模型（从 application.yml 的 chat-model 配置派生）
-    private final dev.langchain4j.model.openai.OpenAiChatModel openAiChatModel;
 
     // Step3: 多轮对话记忆 Provider（按 userId 隔离会话）
     private final ChatMemoryProvider chatMemoryProvider;
@@ -70,9 +64,10 @@ public class AgentConfig {
     private org.springframework.core.io.Resource systemPromptResource;
 
     /**
-     * 流式对话模型 Bean — 给 chatStream() 方法用
+     * 流式对话模型 Bean — 给 chatStream()（TokenStream）用
      *
-     * 从 application.yml 读取同样的 DeepSeek 配置，构建流式版本
+     * AiServices 检测到方法返回 TokenStream 时自动使用此模型，
+     * 不会回退到同步 ChatLanguageModel。
      */
     @Bean
     public StreamingChatLanguageModel streamingChatLanguageModel() {
@@ -89,7 +84,7 @@ public class AgentConfig {
 
     @Bean
     public OpsAssistant opsAssistant(StreamingChatLanguageModel streamingChatLanguageModel) {
-        log.info("[Agent] 开始构建 OpsAssistant 代理实例（含流式）");
+        log.info("[Agent] 开始构建 OpsAssistant 代理实例（同步 + TokenStream 流式）");
 
         // 1. 加载 System Prompt
         String systemPrompt = loadSystemPrompt();
@@ -98,17 +93,19 @@ public class AgentConfig {
         // 2. 配置驱动收集 Tool
         List<Object> tools = toolRegistry.getEnabledTools();
 
-        // 3. 构建 AiServices 代理实例（同时绑定同步+流式模型）
+        // 3. 构建 AiServices 代理实例
+        //    - chatLanguageModel → chat() 返回 String
+        //    - streamingChatLanguageModel → chatStream() 返回 TokenStream
         OpsAssistant assistant = AiServices.builder(OpsAssistant.class)
                 .chatLanguageModel(chatLanguageModel)                    // 同步：chat()
-                .streamingChatLanguageModel(streamingChatLanguageModel)   // 流式：chatStream()
+                .streamingChatLanguageModel(streamingChatLanguageModel)   // 流式：chatStream() → TokenStream
                 .systemMessageProvider(memoryId -> systemPrompt)
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(tools)
                 .maxSequentialToolsInvocations(10)
                 .build();
 
-        log.info("[Agent] OpsAssistant 构建完成（含同步+流式 + 多轮记忆 + {} 个 Tool）", tools.size());
+        log.info("[Agent] OpsAssistant 构建完成（同步 + TokenStream流式 + 多轮记忆 + {} 个 Tool）", tools.size());
         return assistant;
     }
 

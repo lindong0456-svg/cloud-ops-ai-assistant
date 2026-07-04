@@ -3,15 +3,19 @@ package com.cloudops.controller;
 import com.cloudops.agent.OpsAssistant;
 import com.cloudops.guardrail.InputGuardrail;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.tool.ToolExecution;
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.scheduler.Schedulers;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -139,14 +143,18 @@ public class ChatController {
     }
 
     /**
-     * SSE 流式对话接口 — 直接写 ServletOutputStream，每 token flush
+     * SSE 流式对话接口 — TokenStream → Flux.create() → 直接写 ServletOutputStream
      *
-     * 不用 SseEmitter，不用 Reactor Flux 的 doOnNext，
-     * 直接在 LangChain4j 的回调里写 response 并 flush。
+     * ★ SSE 事件类型（前端按 type 字段分发）：
+     *   {"type":"token",     "content":"..."}
+     *   {"type":"tool-start","toolName":"alarmQuery","args":"..."}
+     *   {"type":"tool-end",  "toolName":"alarmQuery","result":"..."}
+     *   {"type":"done"}
+     *   {"type":"error",    "message":"..."}
      *
-     * ★ setBufferSize(0) + ServletOutputStream 是绕过 Tomcat 缓冲的关键：
-     *   - PrintWriter 走 OutputStreamWriter，有字符编码缓冲层
-     *   - ServletOutputStream 直接写字节，flush() 直达 socket
+     * 面试讲法：通过 TokenStream.onToolExecution 回调，将 Agent 的工具调用过程
+     * 通过 SSE 命名事件实时推送到前端，实现"排障过程透明化"——用户能看到 Agent
+     * 正在调哪个工具、查什么参数、返回什么结果，而不是对着空白页面干等。
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public void chatStream(
@@ -158,52 +166,76 @@ public class ChatController {
 
         // ★ 禁用 Tomcat response buffer（必须在 getOutputStream() 前）
         response.setBufferSize(0);
-        // 设置 SSE 响应头
         response.setContentType("text/event-stream");
         response.setCharacterEncoding("UTF-8");
         response.setHeader("Cache-Control", "no-cache, no-transform");
         response.setHeader("Connection", "keep-alive");
         response.setHeader("X-Accel-Buffering", "no");
 
-        // ★ 直接用 ServletOutputStream，绕过 OutputStreamWriter 编码缓冲
         ServletOutputStream out = response.getOutputStream();
 
         // 1. 护轨检查
         InputGuardrail.GuardrailResult guardrailResult = inputGuardrail.check(message);
         if (!guardrailResult.isAllowed()) {
             log.info("[Chat-SSE] 护轨拦截 userId={}, 命中词={}", userId, guardrailResult.getHitKeyword());
-            writeSse(out, "[护轨拦截] " + guardrailResult.getHitKeyword());
-            writeSse(out, guardrailResult.getMessage());
-            writeSse(out, "[DONE]");
+            writeSseEvent(out, "token", Map.of("content", "[护轨拦截] " + guardrailResult.getHitKeyword()));
+            writeSseEvent(out, "token", Map.of("content", guardrailResult.getMessage()));
+            writeSseEvent(out, "done", Map.of());
             return;
         }
 
-        // 2. 用 CountDownLatch 阻塞 servlet 线程，直到 Flux 完成
-        //    Flux 在 boundedElastic 线程上订阅，每个 token 直接写 response 并 flush
+        // 2. TokenStream → Flux.create() 桥接 + 工具执行事件
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean hasError = new AtomicBoolean(false);
 
-        opsAssistant.chatStream(userId, message)
-                .subscribeOn(Schedulers.boundedElastic())
-                .doOnNext(token -> {
-                    writeSse(out, token);
-                })
+        TokenStream tokenStream = opsAssistant.chatStream(userId, message);
+
+        // ★ 注册工具执行回调 — 排障过程透明化的关键
+        tokenStream.onToolExecuted((ToolExecution toolExecution) -> {
+            String toolName = toolExecution.request().name();
+            String args = toolExecution.request().arguments();
+            log.info("[Chat-SSE] 工具开始执行: toolName={}, args={}", toolName, truncate(args));
+            writeSseEvent(out, "tool-start", Map.of("toolName", toolName, "args", args));
+            // 工具执行结果在同一个回调里（同步执行完成后 result 已有值）
+            String result = toolExecution.result() != null
+                    ? toolExecution.result().toString()
+                    : "(无返回内容)";
+            log.info("[Chat-SSE] 工具执行完成: toolName={}, resultLen={}", toolName,
+                    result != null ? result.length() : 0);
+            writeSseEvent(out, "tool-end", Map.of("toolName", toolName, "result", result));
+        });
+
+        Flux<String> tokenFlux = Flux.create((FluxSink<String> sink) -> {
+            tokenStream.onPartialResponse(token -> sink.next(token));
+            tokenStream.onCompleteResponse(chatResponse -> {
+                log.info("[Chat-SSE] TokenStream 完成, userId={}", userId);
+                sink.complete();
+            });
+            tokenStream.onError(error -> {
+                log.error("[Chat-SSE] TokenStream 异常, userId={}", userId, error);
+                sink.error(error);
+            });
+        }, FluxSink.OverflowStrategy.BUFFER);
+
+        // 3. 订阅 Flux
+        tokenFlux
+                .doOnNext(token -> writeSseEvent(out, "token", Map.of("content", token)))
                 .doOnError(error -> {
-                    log.error("[Chat-SSE] Flux 异常, userId={}", userId, error);
-                    writeSse(out, "[ERROR] " + error.getMessage());
-                    writeSse(out, "[DONE]");
+                    log.error("[Chat-SSE] 流式异常, userId={}", userId, error);
+                    writeSseEvent(out, "error", Map.of("message", error.getMessage()));
+                    writeSseEvent(out, "done", Map.of());
                     hasError.set(true);
                     latch.countDown();
                 })
                 .doOnComplete(() -> {
                     log.info("[Chat-SSE] 流式完成, userId={}", userId);
-                    writeSse(out, "[DONE]");
+                    writeSseEvent(out, "done", Map.of());
                     latch.countDown();
                 })
                 .subscribe();
 
-        // 3. 阻塞等待 Flux 完成（servlet 线程）
-        //    Spring MVC 在 servlet 线程返回前不会关闭 response
+        tokenStream.start();
+
         try {
             latch.await();
         } catch (InterruptedException e) {
@@ -214,15 +246,17 @@ public class ChatController {
     }
 
     /**
-     * 写 SSE data 并立即 flush — 直接写字节到 ServletOutputStream
+     * 写结构化 SSE 事件 — type 区分 token / tool-start / tool-end / done / error
      */
-    private void writeSse(ServletOutputStream out, String data) {
+    private void writeSseEvent(ServletOutputStream out, String type, Map<String, Object> fields) {
         try {
-            String json = objectMapper.writeValueAsString(data);
+            Map<String, Object> event = new LinkedHashMap<>(fields);
+            event.put("type", type);
+            String json = objectMapper.writeValueAsString(event);
             out.write(("data:" + json + "\n\n").getBytes(StandardCharsets.UTF_8));
             out.flush();
         } catch (Exception e) {
-            log.error("[Chat-SSE] 写入失败: {}", truncate(data), e);
+            log.error("[Chat-SSE] SSE写入失败: type={}", type, e);
         }
     }
 
