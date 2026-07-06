@@ -55,7 +55,7 @@ public class KnowledgeRetrievalService {
     @Value("${rag.rerank-top-k:3}")
     private int rerankTopK;
 
-    @Value("${rag.docs-path:/Users/linguoyong/Desktop/cloudops-runbooks}")
+    @Value("${rag.docs-path:./docs/runbooks}")
     private String docsPath;
 
     /**

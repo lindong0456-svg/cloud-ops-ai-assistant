@@ -44,7 +44,7 @@ public class DocumentIngestService {
     @Value("${rag.chunk-overlap:150}")
     private int chunkOverlap;
 
-    @Value("${rag.docs-path:/Users/linguoyong/Desktop/cloudops-runbooks}")
+    @Value("${rag.docs-path:./docs/runbooks}")
     private String docsPath;
 
     /**
