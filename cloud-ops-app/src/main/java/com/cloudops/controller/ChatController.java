@@ -3,6 +3,7 @@ package com.cloudops.controller;
 import com.cloudops.agent.OpsAssistant;
 import com.cloudops.guardrail.InputGuardrail;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.ToolExecution;
 import jakarta.servlet.ServletOutputStream;
@@ -19,6 +20,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Agent 对话接口
@@ -126,6 +130,7 @@ public class ChatController {
 
         // ★ 直接用 ServletOutputStream 写字节，绕过 OutputStreamWriter 的编码缓冲
         ServletOutputStream out = response.getOutputStream();
+        long requestStartTime = System.currentTimeMillis();
         log.info("[Stream-Test] 开始发送测试 token");
 
         for (int i = 0; i < 10; i++) {
@@ -173,6 +178,7 @@ public class ChatController {
         response.setHeader("X-Accel-Buffering", "no");
 
         ServletOutputStream out = response.getOutputStream();
+        long requestStartTime = System.currentTimeMillis();
 
         // 1. 护轨检查
         InputGuardrail.GuardrailResult guardrailResult = inputGuardrail.check(message);
@@ -187,11 +193,15 @@ public class ChatController {
         // 2. TokenStream → Flux.create() 桥接 + 工具执行事件
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean hasError = new AtomicBoolean(false);
+        AtomicInteger toolCallCount = new AtomicInteger(0);
+        AtomicLong firstTokenTime = new AtomicLong();
+        AtomicReference<TokenUsage> finalTokenUsage = new AtomicReference<>();
 
         TokenStream tokenStream = opsAssistant.chatStream(userId, message);
 
         // ★ 注册工具执行回调 — 排障过程透明化的关键
         tokenStream.onToolExecuted((ToolExecution toolExecution) -> {
+            toolCallCount.incrementAndGet();
             String toolName = toolExecution.request().name();
             String args = toolExecution.request().arguments();
             log.info("[Chat-SSE] 工具开始执行: toolName={}, args={}", toolName, truncate(args));
@@ -206,8 +216,12 @@ public class ChatController {
         });
 
         Flux<String> tokenFlux = Flux.create((FluxSink<String> sink) -> {
-            tokenStream.onPartialResponse(token -> sink.next(token));
+            tokenStream.onPartialResponse(token -> {
+                if (firstTokenTime.get() == 0) firstTokenTime.set(System.currentTimeMillis());
+                sink.next(token);
+            });
             tokenStream.onCompleteResponse(chatResponse -> {
+                if (chatResponse.tokenUsage() != null) finalTokenUsage.set(chatResponse.tokenUsage());
                 log.info("[Chat-SSE] TokenStream 完成, userId={}", userId);
                 sink.complete();
             });
@@ -223,13 +237,29 @@ public class ChatController {
                 .doOnError(error -> {
                     log.error("[Chat-SSE] 流式异常, userId={}", userId, error);
                     writeSseEvent(out, "error", Map.of("message", error.getMessage()));
-                    writeSseEvent(out, "done", Map.of());
+                    Map<String, Object> doneFields = new LinkedHashMap<>();
+                    TokenUsage tu = finalTokenUsage.get();
+                    doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
+                    doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
+                    doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
+                    doneFields.put("toolCallCount", toolCallCount.get());
+                    long ft = firstTokenTime.get();
+                    doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                    writeSseEvent(out, "done", doneFields);
                     hasError.set(true);
                     latch.countDown();
                 })
                 .doOnComplete(() -> {
                     log.info("[Chat-SSE] 流式完成, userId={}", userId);
-                    writeSseEvent(out, "done", Map.of());
+                    Map<String, Object> doneFields = new LinkedHashMap<>();
+                    TokenUsage tu = finalTokenUsage.get();
+                    doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
+                    doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
+                    doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
+                    doneFields.put("toolCallCount", toolCallCount.get());
+                    long ft = firstTokenTime.get();
+                    doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                    writeSseEvent(out, "done", doneFields);
                     latch.countDown();
                 })
                 .subscribe();

@@ -253,6 +253,14 @@
             >
               📥 下载报告
             </button>
+            <!-- 响应统计面板 -->
+            <div v-if="msg.role === 'assistant' && !msg.streaming && (msg as any).stats && (msg as any).stats.totalTokens > 0" class="stats-bar">
+              <span class="stats-item">🪙 {{ ((msg as any).stats.totalTokens).toLocaleString() }} token</span>
+              <span class="stats-divider">·</span>
+              <span class="stats-item">🔧 {{ (msg as any).stats.toolCallCount }} 次工具调用</span>
+              <span class="stats-divider">·</span>
+              <span class="stats-item">⚡ 首字 {{ (msg as any).stats.firstTokenMs }}ms</span>
+            </div>
           </div>
         </div>
       </div>
@@ -710,6 +718,7 @@ async function sendMessage(text: string, isRetry = false) {
         break
       case 'done':
         aiMessage.streaming = false
+        ;(aiMessage as any).stats = { inputTokens: (evt as any).inputTokens || 0, outputTokens: (evt as any).outputTokens || 0, totalTokens: (evt as any).totalTokens || 0, toolCallCount: (evt as any).toolCallCount || 0, firstTokenMs: (evt as any).firstTokenMs || 0 }
         streaming.value = false
         backendOnline.value = true
         currentTool.value = ''
@@ -987,5 +996,23 @@ function onGlobalShortcut(e: KeyboardEvent) {
 /* 组件级样式：textarea 自适应 */
 .input-wrapper textarea {
   width: 100%;
+}
+
+/* ========== 响应统计面板 ========== */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  user-select: none;
+}
+.stats-item {
+  white-space: nowrap;
+}
+.stats-divider {
+  font-size: 9px;
+  opacity: 0.5;
 }
 </style>
