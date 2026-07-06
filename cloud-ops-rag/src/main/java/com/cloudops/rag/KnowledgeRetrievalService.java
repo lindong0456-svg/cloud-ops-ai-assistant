@@ -24,12 +24,12 @@ import java.util.stream.Stream;
 /**
  * 知识检索服务 — RAG 检索核心
  *
- * 数据流：用户问题 → 向量检索 + 关键词检索 → RRF 融合 → top-3 返回
+ * 数据流：用户问题 → 向量检索 + 关键词检索 → RRF 粗排(top-5) + Rerank 精排 → top-3
  *
  * 三种检索方式：
  *   1. vectorSearch  — 语义相似度，调 Milvus 查 top-5
  *   2. keywordSearch — 关键词命中，文件名 LIKE 匹配（轻量方案，不引入 ES）
- *   3. hybridSearch  — RRF 融合两路结果，取 top-3
+ *   3. hybridSearch  — RRF 粗排(top-5) + Rerank 精排 → top-3
  *
  * RRF（Reciprocal Rank Fusion）公式：
  *   score = 1/(60 + rank_vector) + 1/(60 + rank_keyword)
@@ -47,6 +47,7 @@ public class KnowledgeRetrievalService {
 
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
+    private final RerankService rerankService;
 
     @Value("${rag.top-k:5}")
     private int topK;
@@ -196,11 +197,14 @@ public class KnowledgeRetrievalService {
             }
         }
 
-        // 3. 按 RRF 分数降序，取 top-3
-        List<KnowledgeChunk> result = fusedMap.values().stream()
+        // 3. RRF 粗排(top-5) → Rerank 精排 → top-3
+        List<KnowledgeChunk> fused = fusedMap.values().stream()
                 .sorted(Comparator.comparingDouble(KnowledgeChunk::getScore).reversed())
-                .limit(rerankTopK)
+                .limit(topK)
                 .collect(Collectors.toList());
+
+        // Rerank 精排
+        List<KnowledgeChunk> result = rerankService.rerank(query, fused, rerankTopK);
 
         long costMs = System.currentTimeMillis() - startTime;
         log.info("[RAG] 混合检索完成, query='{}', 融合后{}条, 耗时{}ms", query, result.size(), costMs);
