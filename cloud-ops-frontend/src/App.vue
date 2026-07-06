@@ -102,36 +102,12 @@
         </div>
       </div>
 
-      <div class="sidebar-section sidebar-section--tools">
-        <div class="section-header section-header--collapsible" @click="toggleTools">
-          <h3>工具能力</h3>
-          <span :class="{ expanded: isToolsExpanded }" class="collapse-icon">▶</span>
-        </div>
-        <div v-show="isToolsExpanded" class="tools-content">
-          <button class="quick-btn" disabled style="opacity:.5;cursor:default">
-            <span class="icon">🔔</span><span>告警查询</span><span class="badge">Tool</span>
-          </button>
-          <button class="quick-btn" disabled style="opacity:.5;cursor:default">
-            <span class="icon">🕸️</span><span>资源拓扑</span><span class="badge">Tool</span>
-          </button>
-          <button class="quick-btn" disabled style="opacity:.5;cursor:default">
-            <span class="icon">📊</span><span>负载分析</span><span class="badge">Tool</span>
-          </button>
-          <button class="quick-btn" disabled style="opacity:.5;cursor:default">
-            <span class="icon">🧾</span><span>账单查询</span><span class="badge">Tool</span>
-          </button>
-          <button class="quick-btn" disabled style="opacity:.5;cursor:default">
-            <span class="icon">📚</span><span>SOP 检索</span><span class="badge">RAG</span>
-          </button>
-        </div>
-      </div>
 
       <div class="sidebar-footer">
         <div class="status-row">
           <span :class="{ online: backendOnline }" class="status-dot"></span>
           <span>{{ backendOnline ? '后端已连接' : '正在连接后端...' }}</span>
         </div>
-        <div style="margin-top:6px;opacity:.6">userId: {{ userId }}</div>
       </div>
     </aside>
 
@@ -1007,7 +983,7 @@ function onGlobalShortcut(e: KeyboardEvent) {
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 13px;
   color: #94a3b8;
   user-select: none;
 }
@@ -1017,5 +993,13 @@ function onGlobalShortcut(e: KeyboardEvent) {
 .stats-divider {
   font-size: 9px;
   opacity: 0.5;
+}
+
+.section-header h3 {
+  font-size: 14px;
+  margin: 0;
+}
+.section-header h3 .alarm-count-badge {
+  font-size: 13px;
 }
 </style>

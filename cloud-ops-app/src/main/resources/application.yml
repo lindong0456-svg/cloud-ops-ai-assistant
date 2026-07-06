@@ -28,7 +28,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/cloud_ops?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:root}
+    password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   # 加载额外的 yml 配置文件（护轨配置 + Tool注册配置）

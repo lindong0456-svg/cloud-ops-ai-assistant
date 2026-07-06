@@ -26,7 +26,7 @@ import java.nio.file.Paths;
 @RequestMapping("/api/sop")
 public class SopController {
 
-    @Value("${rag.docs-path:/Users/linguoyong/Desktop/cloudops-runbooks}")
+    @Value("${rag.docs-path:./docs/runbooks}")
     private String docsPath;
 
     /**
