@@ -1,0 +1,45 @@
+{
+  "dashboard": {
+    "title": "云运维智能助手 · 可观测性",
+    "uid": "cloudops",
+    "refresh": "5s",
+    "panels": [
+      {
+        "title": "LLM Token 消耗",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+        "targets": [{"expr": "llm_token_total","legendFormat": "总 Token"}],
+        "fieldConfig": {"defaults": {"unit": "short","decimals":0}}
+      },
+      {
+        "title": "工具调用次数",
+        "type": "stat",
+        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+        "targets": [{"expr": "tool_call_total","legendFormat": "工具调用"}],
+        "fieldConfig": {"defaults": {"unit": "short","decimals":0}}
+      },
+      {
+        "title": "LLM Token 消耗趋势",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 4, "w": 16, "h": 10},
+        "targets": [
+          {"expr": "rate(llm_token_input_total[1m])","legendFormat": "Input/s"},
+          {"expr": "rate(llm_token_output_total[1m])","legendFormat": "Output/s"}
+        ],
+        "fieldConfig": {"defaults": {"unit": "short"}}
+      },
+      {
+        "title": "工具调用耗时分布",
+        "type": "timeseries",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 14},
+        "targets": [
+          {"expr": "rate(tool_call_duration_seconds_sum[30s]) / rate(tool_call_duration_seconds_count[30s])","legendFormat": "平均耗时(秒)"}
+        ],
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      }
+    ],
+    "schemaVersion": 39,
+    "time": {"from": "now-15m", "to": "now"}
+  },
+  "overwrite": true
+}

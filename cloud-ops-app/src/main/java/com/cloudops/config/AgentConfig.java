@@ -1,6 +1,7 @@
 package com.cloudops.config;
 
 import com.cloudops.agent.OpsAssistant;
+import com.cloudops.agent.listener.TokenUsageListener;
 import com.cloudops.registry.ToolRegistry;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -70,7 +71,7 @@ public class AgentConfig {
      * 不会回退到同步 ChatLanguageModel。
      */
     @Bean
-    public StreamingChatLanguageModel streamingChatLanguageModel() {
+    public StreamingChatLanguageModel streamingChatLanguageModel(TokenUsageListener listener) {
         log.info("[Agent] 构建 StreamingChatLanguageModel: baseUrl={}, model={}", baseUrl, modelName);
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
@@ -79,6 +80,7 @@ public class AgentConfig {
                 .temperature(temperature)
                 .maxTokens(maxTokens)
                 .timeout(Duration.ofSeconds(60))
+                .listeners(List.of(listener))
                 .build();
     }
 

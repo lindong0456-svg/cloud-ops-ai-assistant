@@ -1,5 +1,7 @@
 package com.cloudops.tool;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.function.Supplier;
@@ -29,6 +31,8 @@ import java.util.function.Supplier;
 @Slf4j
 public abstract class AbstractTool {
 
+    public static MeterRegistry meterRegistry;
+
     /**
      * 模板方法 — final 防止子类覆盖执行流程
      *
@@ -40,15 +44,34 @@ public abstract class AbstractTool {
      */
     protected <T> ToolResult<T> execute(String toolName, Supplier<T> action) {
         long startTime = System.currentTimeMillis();
+        Timer.Sample sample = Timer.start(meterRegistry);
         try {
             log.info("[Tool] {} 开始执行", toolName);
             T result = action.get();
             long costMs = System.currentTimeMillis() - startTime;
             log.info("[Tool] {} 执行完成, 耗时 {}ms", toolName, costMs);
+            if (meterRegistry != null) {
+                sample.stop(Timer.builder("tool.call.duration")
+                        .tag("tool", toolName)
+                        .tag("status", "success")
+                        .register(meterRegistry));
+                meterRegistry.counter("tool.call.total",
+                        "tool", toolName,
+                        "status", "success").increment();
+            }
             return ToolResult.success(result, costMs);
         } catch (Exception e) {
             long costMs = System.currentTimeMillis() - startTime;
             log.error("[Tool] {} 执行失败, 耗时 {}ms, 错误: {}", toolName, costMs, e.getMessage(), e);
+            if (meterRegistry != null) {
+                sample.stop(Timer.builder("tool.call.duration")
+                        .tag("tool", toolName)
+                        .tag("status", "error")
+                        .register(meterRegistry));
+                meterRegistry.counter("tool.call.total",
+                        "tool", toolName,
+                        "status", "error").increment();
+            }
             return ToolResult.fail(e.getMessage(), costMs);
         }
     }

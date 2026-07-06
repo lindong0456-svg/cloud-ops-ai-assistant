@@ -85,3 +85,16 @@ rag:
   chunk-overlap: 150
   top-k: 5
   rerank-top-k: 3
+
+# ===========================================
+# Actuator + Prometheus（可观测性）
+# ===========================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true

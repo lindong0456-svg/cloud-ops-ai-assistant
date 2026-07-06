@@ -28,6 +28,7 @@
         <module>cloud-ops-skill</module>
         <module>cloud-ops-agent</module>
         <module>cloud-ops-app</module>
+        <module>cloud-ops-mcp</module>
     </modules>
 
     <properties>
@@ -72,6 +73,13 @@
                 <groupId>com.cloudops</groupId>
                 <artifactId>cloud-ops-agent</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+
+            <!-- Micrometer Prometheus Registry（可观测性指标） -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-registry-prometheus</artifactId>
+                <version>1.14.1</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
