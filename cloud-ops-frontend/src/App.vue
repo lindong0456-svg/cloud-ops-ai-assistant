@@ -347,7 +347,7 @@ function toggleQuickActions() { isQuickActionsExpanded.value = !isQuickActionsEx
 const isHistoryExpanded = ref(true)
 function toggleHistory() { isHistoryExpanded.value = !isHistoryExpanded.value }
 
-const userId = 'web-user-' + Math.random().toString(36).substring(2, 8)
+let userId = 'web-user-' + Math.random().toString(36).substring(2, 8)
 // SSE 连接：EventSource 直连后端
 let eventSource: EventSource | null = null
 
@@ -401,7 +401,8 @@ function archiveCurrentSession() {
       id: currentSessionId.value,
       title,
       messages: [...messages.value],
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      userId: userId,
     })
   }
   // 最多保留 20 条历史
@@ -414,6 +415,7 @@ function switchSession(id: string) {
   const s = sessions.value.find(x => x.id === id)
   if (s) {
     currentSessionId.value = s.id
+    userId = s.userId || userId
     messages.value = s.messages.map(m => ({ ...m, streaming: false }))
   }
 }
@@ -652,6 +654,7 @@ function newChat() {
   lastQuickAction.value = ''
   inputText.value = ''
   needsRetry.value = false
+  userId = 'web-user-' + Math.random().toString(36).substring(2, 8)  // ★ 新会话 = 新 Memory key
   showToast('已开启新对话')
 }
 
