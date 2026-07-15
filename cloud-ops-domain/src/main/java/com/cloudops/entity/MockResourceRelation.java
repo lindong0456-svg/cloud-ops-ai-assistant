@@ -11,6 +11,8 @@ public class MockResourceRelation {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private String tenantId;      // ← 新增
+    private String deptId;        // ← 新增
     private String resourceId;
     private String relatedId;
     private String relationType;

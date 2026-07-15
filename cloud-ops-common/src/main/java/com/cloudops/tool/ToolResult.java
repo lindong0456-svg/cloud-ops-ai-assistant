@@ -7,7 +7,7 @@ import lombok.Data;
  * Tool 统一返回结构
  *
  * 所有 Tool 的执行结果都包装成 ToolResult，统一 success/data/error/costMs 四个字段。
- * 面试可讲：借鉴联通计费中心的统一响应格式（code/info/data/success），
+ * 联通计费中心的统一响应格式（code/info/data/success），
  * 这里简化为 success/data/error/costMs，加了执行耗时用于性能监控。
  */
 @Data

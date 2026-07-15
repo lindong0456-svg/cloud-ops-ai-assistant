@@ -4,6 +4,7 @@ import com.cloudops.rag.DocumentIngestService;
 import com.cloudops.rag.KnowledgeChunk;
 import com.cloudops.rag.KnowledgeRetrievalService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -34,6 +35,7 @@ public class RagController {
      * 调用：GET /api/rag/ingest
      */
     @GetMapping("/ingest")
+    @PreAuthorize("hasAuthority('rag:ingest')")
     public Map<String, Object> ingest() {
         int count = documentIngestService.ingestAll();
         return Map.of(
@@ -48,6 +50,7 @@ public class RagController {
      * 调用：GET /api/rag/search?query=CPU高&mode=hybrid
      */
     @GetMapping("/search")
+    @PreAuthorize("hasAuthority('rag:read')")
     public Map<String, Object> search(
             @RequestParam String query,
             @RequestParam(defaultValue = "hybrid") String mode

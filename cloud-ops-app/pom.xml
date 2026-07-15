@@ -37,6 +37,10 @@
             <groupId>com.cloudops</groupId>
             <artifactId>cloud-ops-agent</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.cloudops</groupId>
+            <artifactId>cloud-ops-security</artifactId>
+        </dependency>
 
         <!-- Spring Boot Web（REST 接口） -->
         <dependency>

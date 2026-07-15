@@ -15,6 +15,8 @@ public class MockResourceLoad {
 
     @TableId(type = IdType.AUTO)
     private Long id;
+    private String tenantId;      // ← 新增
+    private String deptId;        // ← 新增
     private String resourceId;
     private String resourceType;
     private LocalDate beginTime;

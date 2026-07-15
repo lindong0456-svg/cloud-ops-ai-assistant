@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
 public class MockAlarm {
     @TableId(type = IdType.AUTO)
     private Long id;
+    private String tenantId;      // ← 新增
+    private String deptId;        // ← 新增
     private String alertId;
     private String resourceId;
     private String resourceType;

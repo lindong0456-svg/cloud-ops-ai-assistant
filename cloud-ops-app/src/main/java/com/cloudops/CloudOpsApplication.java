@@ -19,7 +19,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   - com.cloudops.tool          → 4 个 Tool
  */
 @SpringBootApplication
-@MapperScan("com.cloudops.mapper")
+@MapperScan({"com.cloudops.mapper", "com.cloudops.security.mapper"})
 public class CloudOpsApplication {
 
     public static void main(String[] args) {

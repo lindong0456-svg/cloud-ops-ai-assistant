@@ -25,6 +25,7 @@
         <module>cloud-ops-common</module>
         <module>cloud-ops-domain</module>
         <module>cloud-ops-rag</module>
+        <module>cloud-ops-security</module>
         <module>cloud-ops-skill</module>
         <module>cloud-ops-agent</module>
         <module>cloud-ops-app</module>
@@ -35,6 +36,8 @@
         <java.version>21</java.version>
         <langchain4j.version>1.0.0-beta3</langchain4j.version>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+        <spring-security.version>6.4.2</spring-security.version>  <!-- 新增 -->
+        <jjwt.version>0.12.6</jjwt.version>                      <!-- 新增 -->
     </properties>
 
     <!-- 统一版本管理：子模块引用时不用写 version -->
@@ -81,6 +84,40 @@
                 <artifactId>micrometer-registry-prometheus</artifactId>
                 <version>1.14.1</version>
             </dependency>
+
+            <!-- 内部模块 -->
+            <dependency>
+                <groupId>com.cloudops</groupId>
+                <artifactId>cloud-ops-security</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Spring Security BOM（统一版本） -->
+            <dependency>
+                <groupId>org.springframework.security</groupId>
+                <artifactId>spring-security-bom</artifactId>
+                <version>${spring-security.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- JJWT -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 

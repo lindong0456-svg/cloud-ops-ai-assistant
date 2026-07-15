@@ -38,7 +38,7 @@ import java.util.stream.Stream;
  * 设计取舍：
  *   - 不接外部 Rerank API（如 Cohere Rerank），省一次网络调用
  *   - 关键词检索只用文件名匹配，23 篇文档量小够用
- *   - 面试可讲"按场景演进：文档量上千后关键词检索换 ES，Rerank 换 Cohere"
+ *   - "按场景演进：文档量上千后关键词检索换 ES，Rerank 换 Cohere"
  */
 @Slf4j
 @Service

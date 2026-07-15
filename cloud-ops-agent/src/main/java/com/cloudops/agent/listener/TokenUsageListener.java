@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * 回调链路：onResponse(ctx) → ctx.chatResponse() → ChatResponse.tokenUsage()
  *           → TokenUsage.inputTokenCount() / outputTokenCount() / totalTokenCount()
  *
- * 面试讲法：ChatModelListener 是 LangChain4j 原生监听机制，
+ * ChatModelListener 是 LangChain4j 原生监听机制，
  * 每次 LLM 调用自动记录 token 消耗到 Micrometer，
  * 配合 Prometheus + Grafana 可做 token 消耗趋势监控。
  */

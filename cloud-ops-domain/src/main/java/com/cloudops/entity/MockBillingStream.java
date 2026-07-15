@@ -17,6 +17,7 @@ public class MockBillingStream {
     private String streamId;
     private String billingResourceId;
     private String tenantId;
+    private String deptId;        // ← 新增
     private String tenantName;
     private String resourceName;
     private String resourceType;

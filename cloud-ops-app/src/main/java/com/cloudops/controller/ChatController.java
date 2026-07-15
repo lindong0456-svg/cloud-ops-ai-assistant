@@ -11,6 +11,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -26,14 +27,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Agent 对话接口
- *
- * ★ 第11轮：禁用 Tomcat response buffer + 直接写 ServletOutputStream 字节
- *
- * 之前用 PrintWriter + flush()，但 Tomcat 的 response output buffer（默认 8KB）
- * 和 OutputStreamWriter 的字符编码缓冲层会囤数据，flush() 只把数据从
- * PrintWriter 推到 Coyote buffer，没到网络层，导致所有 token 攒到最后一起发。
- *
- * 改为：
  *   1. response.setBufferSize(0) — 必须在 getOutputStream() 前调用，禁用 Tomcat 缓冲
  *   2. 用 ServletOutputStream 直接写 UTF-8 字节 — 绕过 OutputStreamWriter 编码缓冲
  *   3. out.flush() — 直接刷到 socket
@@ -49,6 +42,7 @@ public class ChatController {
     private final ObjectMapper objectMapper;
 
     @GetMapping("/chat")
+    @PreAuthorize("hasAuthority('agent:chat')")
     public Map<String, Object> chat(
             @RequestParam(defaultValue = "default-user") String userId,
             @RequestParam String message
@@ -82,6 +76,7 @@ public class ChatController {
     }
 
     @PostMapping("/chat")
+    @PreAuthorize("hasAuthority('agent:chat')")
     public Map<String, Object> chatPost(
             @RequestParam(defaultValue = "default-user") String userId,
             @RequestParam String message
@@ -90,6 +85,7 @@ public class ChatController {
     }
 
     @GetMapping(value = "/chat/text", produces = MediaType.TEXT_PLAIN_VALUE)
+    @PreAuthorize("hasAuthority('agent:chat')")
     public String chatText(
             @RequestParam(defaultValue = "default-user") String userId,
             @RequestParam String message
@@ -119,6 +115,7 @@ public class ChatController {
      *    会做预渲染缓冲，看不到逐字效果。只能用 curl -N 或 EventSource 测试。
      */
     @GetMapping(value = "/stream-test", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PreAuthorize("hasAuthority('agent:chat')")
     public void streamTest(HttpServletResponse response) throws Exception {
         // ★ setBufferSize(0) 必须在 getOutputStream() 前调用
         response.setBufferSize(0);
@@ -157,11 +154,9 @@ public class ChatController {
      *   {"type":"done"}
      *   {"type":"error",    "message":"..."}
      *
-     * 面试讲法：通过 TokenStream.onToolExecution 回调，将 Agent 的工具调用过程
-     * 通过 SSE 命名事件实时推送到前端，实现"排障过程透明化"——用户能看到 Agent
-     * 正在调哪个工具、查什么参数、返回什么结果，而不是对着空白页面干等。
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PreAuthorize("hasAuthority('agent:chat')")
     public void chatStream(
             @RequestParam(defaultValue = "default-user") String userId,
             @RequestParam String message,

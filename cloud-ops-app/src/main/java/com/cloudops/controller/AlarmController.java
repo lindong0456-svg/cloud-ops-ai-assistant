@@ -4,6 +4,7 @@ import com.cloudops.entity.MockAlarm;
 import com.cloudops.skill.AlarmSearchSkill;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -33,6 +34,7 @@ public class AlarmController {
      * 调用：GET /api/alarms?limit=10
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('alarm:read')")
     public Map<String, Object> listAlarms(@RequestParam(defaultValue = "10") int limit) {
         log.info("[Alarm] 查询未处理告警, limit={}", limit);
         List<MockAlarm> alarms = alarmSearchSkill.searchUnresolved(limit);
