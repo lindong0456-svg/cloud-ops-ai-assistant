@@ -123,14 +123,28 @@ public class WorkflowOrchestrator {
         // Step 4 流式输出
         String synthesisInput = buildSynthesisInput(context);
         log.info("[Workflow] 前置步骤完成, 开始流式综合分析");
-        return synthesisAgent.synthesizeStream(sessionId, synthesisInput);
+        return synthesisAgent.synthesizeStream(agentMemoryId(sessionId, "synthesis"), synthesisInput);
     }
 
     // ===== 各 Agent 执行方法 =====
 
+    /**
+     * 为每个 Agent 生成独立的 memoryId，隔离 ChatMemory。
+     *
+     * ★ 根因修复：原先所有 Agent 共享同一个 sessionId，导致 AlarmAnalysisAgent 产生的
+     *   tool_calls（调用 alarmQuery）残留在共享 memory 中。当 ResourceDiagnosticAgent
+     *   或 TriageAgent（无 Tool）加载这份 memory 时，OpenAI API 报 400:
+     *   "An assistant message with 'tool_calls' must be followed by tool messages"
+     *
+     *   每个 Agent 用专属 memoryId 后，tool_calls 不会跨 Agent 污染。
+     */
+    private String agentMemoryId(String sessionId, String agentName) {
+        return sessionId + ":" + agentName;
+    }
+
     private TriageResult runTriage(String sessionId, String message, WorkflowContext context) {
         long start = System.currentTimeMillis();
-        String result = triageAgent.triage(sessionId, message);
+        String result = triageAgent.triage(agentMemoryId(sessionId, "triage"), message);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("TriageAgent", cost);
         log.info("[Workflow] TriageAgent 完成, 耗时={}ms, 输出={}", cost, truncate(result));
@@ -141,7 +155,7 @@ public class WorkflowOrchestrator {
 
     private String runAlarmAnalysis(String sessionId, String message, WorkflowContext context) {
         long start = System.currentTimeMillis();
-        String result = alarmAgent.analyze(sessionId, message);
+        String result = alarmAgent.analyze(agentMemoryId(sessionId, "alarm"), message);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("AlarmAnalysisAgent", cost);
         log.info("[Workflow] AlarmAnalysisAgent 完成, 耗时={}ms", cost);
@@ -150,7 +164,7 @@ public class WorkflowOrchestrator {
 
     private String runResourceDiagnosis(String sessionId, String message, WorkflowContext context) {
         long start = System.currentTimeMillis();
-        String result = resourceAgent.diagnose(sessionId, message);
+        String result = resourceAgent.diagnose(agentMemoryId(sessionId, "resource"), message);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("ResourceDiagnosticAgent", cost);
         log.info("[Workflow] ResourceDiagnosticAgent 完成, 耗时={}ms", cost);
@@ -164,7 +178,7 @@ public class WorkflowOrchestrator {
         if (context.getTriageResult() != null && context.getTriageResult().keywords() != null) {
             enrichedQuery = message + "\n关键词: " + String.join(", ", context.getTriageResult().keywords());
         }
-        String result = knowledgeAgent.retrieve(sessionId, enrichedQuery);
+        String result = knowledgeAgent.retrieve(agentMemoryId(sessionId, "knowledge"), enrichedQuery);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("KnowledgeRetrievalAgent", cost);
         log.info("[Workflow] KnowledgeRetrievalAgent 完成, 耗时={}ms", cost);
@@ -173,7 +187,7 @@ public class WorkflowOrchestrator {
 
     private String runBillingAnalysis(String sessionId, String message, WorkflowContext context) {
         long start = System.currentTimeMillis();
-        String result = billingAgent.analyze(sessionId, message);
+        String result = billingAgent.analyze(agentMemoryId(sessionId, "billing"), message);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("BillingAnalysisAgent", cost);
         log.info("[Workflow] BillingAnalysisAgent 完成, 耗时={}ms", cost);
@@ -183,7 +197,7 @@ public class WorkflowOrchestrator {
     private String runSynthesis(String sessionId, WorkflowContext context) {
         long start = System.currentTimeMillis();
         String synthesisInput = buildSynthesisInput(context);
-        String result = synthesisAgent.synthesize(sessionId, synthesisInput);
+        String result = synthesisAgent.synthesize(agentMemoryId(sessionId, "synthesis"), synthesisInput);
         long cost = System.currentTimeMillis() - start;
         context.recordExecution("SynthesisAgent", cost);
         log.info("[Workflow] SynthesisAgent 完成, 耗时={}ms", cost);
@@ -252,6 +266,15 @@ public class WorkflowOrchestrator {
     private String truncate(String s) {
         return s != null && s.length() > 80 ? s.substring(0, 80) + "..." : s;
     }
+
+    public TriageAgent getTriageAgent() { return triageAgent; }
+    public AlarmAnalysisAgent getAlarmAgent() { return alarmAgent; }
+    public ResourceDiagnosticAgent getResourceAgent() { return resourceAgent; }
+    public KnowledgeRetrievalAgent getKnowledgeAgent() { return knowledgeAgent; }
+    public BillingAnalysisAgent getBillingAgent() { return billingAgent; }
+    public SynthesisAgent getSynthesisAgent() { return synthesisAgent; }
+    public TriageResult parseTriage(String json) { return parseTriageResult(json); }
+
 
     // ===== 工作流结果 =====
 

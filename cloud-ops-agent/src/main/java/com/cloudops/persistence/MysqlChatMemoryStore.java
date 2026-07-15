@@ -32,7 +32,7 @@ import static dev.langchain4j.data.message.ChatMessageType.USER;
 @RequiredArgsConstructor
 public class MysqlChatMemoryStore implements ChatMemoryStore {
 
-    private static final int MAX_MESSAGES = 20;
+    private static final int MAX_MESSAGES = 50;
     private final ChatMessageMapper mapper;
 
     @Override

@@ -20,7 +20,7 @@ import org.springframework.context.annotation.Configuration;
 @RequiredArgsConstructor
 public class ChatMemoryConfig {
 
-    private static final int MAX_MESSAGES = 20;
+    private static final int MAX_MESSAGES = 50;
     private final ChatMemoryStore chatMemoryStore;
 
     @Bean

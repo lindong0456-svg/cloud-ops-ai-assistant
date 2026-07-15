@@ -6,6 +6,8 @@ import com.cloudops.tool.AlarmQueryTool;
 import com.cloudops.tool.BillingQueryTool;
 import com.cloudops.tool.ResourceLoadTool;
 import com.cloudops.tool.ResourceRelationTool;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
@@ -16,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * 多Agent配置 — 为每个Agent构建独立的 AiServices 实例
@@ -61,6 +64,8 @@ public class MultiAgentConfig {
         return AiServices.builder(TriageAgent.class)
                 .chatLanguageModel(chatLanguageModel)
                 .chatMemoryProvider(chatMemoryProvider)
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
     }
 
@@ -76,6 +81,8 @@ public class MultiAgentConfig {
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(List.of(alarmQueryTool, resourceRelationTool))
                 .maxSequentialToolsInvocations(5)
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
     }
 
@@ -91,6 +98,8 @@ public class MultiAgentConfig {
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(List.of(resourceLoadTool, resourceRelationTool))
                 .maxSequentialToolsInvocations(5)
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
     }
 
@@ -105,6 +114,8 @@ public class MultiAgentConfig {
                 .chatLanguageModel(chatLanguageModel)
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(List.of(knowledgeRetrievalTool))
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
     }
 
@@ -120,6 +131,8 @@ public class MultiAgentConfig {
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(List.of(billingQueryTool))
                 .maxSequentialToolsInvocations(3)
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
     }
 
@@ -134,6 +147,22 @@ public class MultiAgentConfig {
                 .chatLanguageModel(chatLanguageModel)
                 .streamingChatLanguageModel(streamingChatLanguageModel)
                 .chatMemoryProvider(chatMemoryProvider)
+                .hallucinatedToolNameStrategy(toolHallucinationHandler())
+
                 .build();
+    }
+
+    /**
+     * 工具幻觉处理策略 — LLM 调用了不存在的工具时不抛异常，返回提示让其继续推理
+     */
+    private Function<ToolExecutionRequest, ToolExecutionResultMessage> toolHallucinationHandler() {
+        return (request) -> {
+            log.warn("[MultiAgent] LLM hallucinated tool: {}, agent does not have this tool. Returning fallback.", request.name());
+            return ToolExecutionResultMessage.from(
+                    request.id(),
+                    request.name(),
+                    "工具 '" + request.name() + "' 不可用，请基于已有知识和可用工具回答。"
+            );
+        };
     }
 }

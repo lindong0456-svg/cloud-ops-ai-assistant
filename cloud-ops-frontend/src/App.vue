@@ -1,1005 +1,416 @@
 <template>
   <div class="app">
-    <!-- ==================== 左侧栏 ==================== -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="brand">
-          <div class="brand-logo">⚡</div>
-          <div>
-            <div class="brand-title">云运维智能助手</div>
-            <div class="brand-sub">ReAct Agent · v1.0</div>
-          </div>
+    <!-- 登录页 -->
+    <div v-if="!isLoggedIn" class="login-overlay">
+      <div class="login-box">
+        <div class="login-logo">⚡</div>
+        <div class="login-title">云运维智能助手</div>
+        <div class="login-sub">Agent协作监控平台</div>
+        <div class="form-group">
+          <label class="form-label">用户名</label>
+          <input v-model="loginUser" class="form-input" placeholder="admin" type="text" @keydown.enter="focusPass">
         </div>
-      </div>
-
-      <!-- 新建对话按钮 -->
-      <button :disabled="streaming" class="new-chat-btn" @click="newChat">
-        <span>✨</span><span>新建对话</span>
-      </button>
-
-      <!-- 实时告警区（提至快捷操作上方，日常使用最关注） -->
-      <div class="sidebar-section sidebar-section--alarms">
-        <div class="section-header">
-          <h3>实时告警 <span v-if="alarms.length > 0" class="alarm-count-badge">{{ alarms.length }}</span></h3>
-          <button :disabled="streaming" class="refresh-btn" title="刷新告警" @click="fetchAlarms">↻</button>
+        <div class="form-group">
+          <label class="form-label">密码</label>
+          <input v-model="loginPass" class="form-input" placeholder="admin123" type="password" @keydown.enter="doLogin">
         </div>
-        <!-- 告警加载中 -->
-        <div v-if="alarmsLoading" class="alarm-loading">
-          <div class="mini-spinner"></div>
-          <span>加载中...</span>
-        </div>
-        <!-- 告警列表 -->
-        <div v-else-if="alarms.length > 0" class="alarm-list">
-          <div
-            v-for="alarm in alarms"
-            :key="alarm.alertId"
-            :class="'severity-' + (alarm.severity || 'info').toLowerCase()"
-            class="alarm-card"
-          >
-            <div class="alarm-severity-bar"></div>
-            <div class="alarm-body">
-              <div class="alarm-resource">{{ alarm.resourceId }}</div>
-              <div class="alarm-msg">{{ alarm.msg }}</div>
-              <div class="alarm-meta">
-                <span class="alarm-type">{{ alarm.resourceType }}</span>
-                <button
-                  :disabled="streaming"
-                  class="alarm-action-btn"
-                  @click="startTroubleshoot(alarm)"
-                >
-                  🔧 排障
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- 无告警 -->
-        <div v-else class="alarm-empty">
-          <span>✅ 暂无未处理告警</span>
-        </div>
-      </div>
-
-      <!-- 快捷操作 -->
-      <div class="sidebar-section">
-        <div class="section-header section-header--collapsible" @click="toggleQuickActions">
-          <h3>快捷操作</h3>
-          <span :class="{ expanded: isQuickActionsExpanded }" class="collapse-icon">▶</span>
-        </div>
-        <div v-show="isQuickActionsExpanded" class="tools-content">
-          <button
-            v-for="item in quickActions"
-            :key="item.text"
-            :class="{ active: lastQuickAction === item.text }"
-            :disabled="streaming"
-            class="quick-btn"
-            @click="sendMessage(item.text)"
-          >
-            <span class="icon">{{ item.icon }}</span><span>{{ item.label }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 历史对话列表 -->
-      <div v-if="sessions.length > 0" class="sidebar-section sidebar-section--history">
-        <div class="section-header section-header--collapsible" @click="toggleHistory">
-          <h3>历史对话</h3>
-          <span :class="{ expanded: isHistoryExpanded }" class="collapse-icon">▶</span>
-        </div>
-        <div v-show="isHistoryExpanded" class="history-list">
-          <div
-            v-for="s in sessions"
-            :key="s.id"
-            :class="{ active: s.id === currentSessionId }"
-            class="history-item"
-            @click="switchSession(s.id)"
-          >
-            <div class="history-title">{{ s.title || '新对话' }}</div>
-            <div class="history-meta">
-              <span class="history-time">{{ formatTime(s.createdAt) }}</span>
-              <button class="history-del" title="删除" @click.stop="deleteSession(s.id)">✕</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-      <div class="sidebar-footer">
-        <div class="status-row">
-          <span :class="{ online: backendOnline }" class="status-dot"></span>
-          <span>{{ backendOnline ? '后端已连接' : '正在连接后端...' }}</span>
-        </div>
-      </div>
-    </aside>
-
-    <!-- ==================== 右侧主区 ==================== -->
-    <main class="main">
-      <header class="main-header">
-        <div class="left">
-          <span class="left-title">智能排障对话</span>
-          <span class="model-tag">DeepSeek · ReAct</span>
-        </div>
-        <div class="right">
-          <span>{{ messages.length }} 条消息</span>
-        </div>
-      </header>
-
-      <div ref="messagesRef" class="messages">
-        <!-- 欢迎页 -->
-        <div v-if="messages.length === 0" class="welcome">
-          <div class="welcome-icon">⚡</div>
-          <h2>云运维智能助手</h2>
-          <p>基于 ReAct 的云资源排障 Agent，支持告警查询、资源拓扑、负载分析、SOP 检索</p>
-          <div class="examples">
-            <button class="example-card" @click="sendMessage('有哪些告警？')">
-              <div class="title"><span class="icon">🚨</span>查看告警</div>
-              <div class="desc">查询当前未处理告警列表</div>
-            </button>
-            <button class="example-card" @click="sendMessage('ecs-001 的 CPU 高怎么办？')">
-              <div class="title"><span class="icon">🔧</span>CPU 排障</div>
-              <div class="desc">从告警到 SOP 的完整排障</div>
-            </button>
-            <button class="example-card" @click="sendMessage('ebm-001 是不是内存泄漏？')">
-              <div class="title"><span class="icon">🧠</span>内存排查</div>
-              <div class="desc">分析内存指标定位泄漏</div>
-            </button>
-            <button class="example-card" @click="sendMessage('gpu-002 成本优化建议')">
-              <div class="title"><span class="icon">💰</span>成本优化</div>
-              <div class="desc">基于账单给出优化建议</div>
-            </button>
-          </div>
-        </div>
-
-        <!-- 消息列表 -->
-        <div v-for="(msg, index) in messages" :key="index" :class="msg.role" class="message">
-          <div class="avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
-          <div class="message-content">
-            <div class="message-role">{{ msg.role === 'user' ? '我' : '运维助手' }}</div>
-            <div v-if="msg.role === 'assistant'" class="react-container">
-              <!--
-                ★ 流式期间：混合渲染模式
-                - 已闭合段落（后面出现了新标记）：渲染为 ReAct 卡片/Markdown，内容不再变
-                - 最后一段（正在生成中）：保持为轻量纯文本，避免每 token 重新 parse+compile
-                效果：卡片逐步"长出来"，最后一段平滑过渡到完成态，不会出现整体跳变
-              -->
-              <template v-if="msg.streaming">
-                <!-- 工具执行中提示（排障过程透明化） -->
-                <div v-if="currentTool" class="tool-progress">
-                  <span class="tool-progress-icon">🔧</span>
-                  <span class="tool-progress-text">正在调用 <strong>{{ currentTool }}</strong>…</span>
-                  <span class="tool-progress-dots"><span>.</span><span>.</span><span>.</span></span>
-                </div>
-                <!-- 已闭合段落 → ReAct 卡片 / Markdown 渲染 -->
-                <template v-for="(section, sIdx) in getStreamingParsed(msg.content).completed" :key="'sc-' + sIdx">
-                  <div v-if="section.type === 'thinking'" class="react-card react-card--thinking stream-card">
-                    <div class="react-card-label">🧠 思考</div>
-                    <div class="react-card-content">{{ section.content }}</div>
-                  </div>
-                  <div v-else-if="section.type === 'tool'" class="react-card react-card--tool stream-card">
-                    <div class="react-card-label">🔧 工具调用</div>
-                    <code class="react-card-content react-code">{{ section.content }}</code>
-                  </div>
-                  <div v-else-if="section.type === 'observation'" class="react-card react-card--observation stream-card">
-                    <div class="react-card-label">📊 观察结果</div>
-                    <div class="react-card-content">{{ section.content }}</div>
-                  </div>
-                  <div v-else class="markdown-body stream-card" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
-                </template>
-                <!-- 最后一段（正在生成）→ 轻量纯文本 + 光标 -->
-                <div v-if="getStreamingParsed(msg.content).current" class="streaming-text">
-                  <span v-if="getStreamingParsed(msg.content).current!.type !== 'text'" class="streaming-label">{{ markerLabel(getStreamingParsed(msg.content).current!.type) }}</span>
-                  {{ getStreamingParsed(msg.content).current!.content }}<span class="streaming-cursor">|</span>
-                </div>
-                <div v-else class="streaming-text"><span class="streaming-cursor">|</span></div>
-              </template>
-
-              <!-- ★ 完成/历史消息：完整 ReAct 卡片 + Markdown 渲染 -->
-              <template v-else>
-                <template v-for="(section, sIdx) in parseReActSections(msg.content)" :key="'done-' + sIdx">
-                  <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
-                    <div class="react-card-label">🧠 思考</div>
-                    <div class="react-card-content">{{ section.content }}</div>
-                  </div>
-                  <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
-                    <div class="react-card-label">🔧 工具调用</div>
-                    <code class="react-card-content react-code">{{ section.content }}</code>
-                  </div>
-                  <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
-                    <div class="react-card-label">📊 观察结果</div>
-                    <div class="react-card-content">{{ section.content }}</div>
-                  </div>
-                  <div v-else class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
-                </template>
-              </template>
-            </div>
-            <div v-else class="text-content">{{ msg.content }}</div>
-            <div v-if="msg.streaming" class="typing-indicator"><span></span><span></span><span></span></div>
-            <!-- 流式断开后的重试按钮 -->
-            <button
-              v-if="needsRetry && msg.role === 'assistant' && !msg.streaming && index === messages.length - 1"
-              class="retry-btn"
-              @click="retrySend"
-            >
-              🔄 重新连接
-            </button>
-            <!-- T29: 下载报告按钮 -->
-            <button
-              v-if="msg.role === 'assistant' && !msg.streaming && msg.content && isTroubleshootReport(msg.content)"
-              class="download-report-btn"
-              @click="downloadReport(msg.content, index)"
-            >
-              📥 下载报告
-            </button>
-            <!-- 响应统计面板 -->
-            <div v-if="msg.role === 'assistant' && !msg.streaming && (msg as any).stats && (msg as any).stats.totalTokens > 0" class="stats-bar">
-              <span class="stats-item">🪙 {{ ((msg as any).stats.totalTokens).toLocaleString() }} token</span>
-              <span class="stats-divider">·</span>
-              <span class="stats-item">🔧 {{ (msg as any).stats.toolCallCount }} 次工具调用</span>
-              <span class="stats-divider">·</span>
-              <span class="stats-item">⚡ 首字 {{ (msg as any).stats.firstTokenMs }}ms</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 输入区 -->
-      <div class="input-area">
-        <div class="input-wrapper">
-          <textarea
-            v-model="inputText"
-            :disabled="streaming"
-            placeholder="描述告警或问题… Enter 发送 · Shift+Enter 换行"
-            rows="1"
-            @input="autoResize"
-            @keydown.enter.exact.prevent="handleSend"
-            @keydown.shift.enter.prevent="inputText += '\n'"
-          ></textarea>
-          <!-- 生成中显示停止按钮，否则显示发送按钮 -->
-          <button v-if="streaming" class="send-btn stop-btn" @click="stopGeneration">
-            ⏹ 停止
-          </button>
-          <button v-else :disabled="!inputText.trim()" class="send-btn" @click="handleSend">
-            发送
-          </button>
-        </div>
-        <div class="input-hint">
-          {{ streaming ? '⏳ Agent 正在生成中，点击"停止"可中断...' : '按 Enter 发送 · Agent 会自主调用工具排障 · 回复支持 Markdown 排版' }}
-        </div>
-      </div>
-    </main>
-
-    <!-- SOP 文档弹窗 -->
-    <div v-if="sopModalVisible" class="sop-modal-overlay" @click.self="closeSop">
-      <div class="sop-modal">
-        <div class="sop-modal-header">
-          <div class="sop-modal-title">
-            <span class="sop-modal-icon">📄</span>
-            <span>{{ sopModalTitle }}</span>
-          </div>
-          <button class="sop-modal-close" @click="closeSop">✕</button>
-        </div>
-        <div class="sop-modal-body">
-          <div v-if="sopLoading" class="sop-loading">
-            <div class="spinner"></div>
-            <span>加载中...</span>
-          </div>
-          <div v-else class="markdown-body" v-html="renderMarkdown(sopModalContent)"></div>
+        <button :disabled="loginLoading" class="login-btn" @click="doLogin">
+          {{ loginLoading ? '登录中...' : '登录' }}
+        </button>
+        <div class="login-err">{{ loginErr }}</div>
+        <div class="login-hint">
+          Mock用户: <code>admin</code> <code>ops_eng</code> <code>finance</code><br>密码均为 <code>admin123</code>
         </div>
       </div>
     </div>
 
-    <!-- Toast -->
+    <!-- 主应用 -->
+    <template v-else>
+      <!-- 左侧导航栏（宽栏：图标+文字） -->
+      <aside class="sidebar-left">
+        <div class="brand-area">
+          <div class="brand-logo">⚡</div>
+          <div class="brand-text">
+            <div class="brand-title">云运维助手</div>
+            <div class="brand-sub">Agent 协作平台</div>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button :class="['nav-item', { active: currentTab === 'chat' }]" @click="switchTab('chat')">
+            <span class="icon">💬</span>
+            <span class="label">智能对话</span>
+            <span v-if="chatState.messages.length > 0" class="nav-badge">{{ chatState.messages.length }}</span>
+          </button>
+          <button class="nav-item nav-item-new" @click="newSession">
+            <span class="icon">✨</span>
+            <span class="label">新建对话</span>
+          </button>
+        </nav>
+
+        <!-- 实时告警区（放左侧栏，支持展开排障） -->
+        <div v-if="canViewAlarms" class="alarm-section">
+          <div class="alarm-section-header">
+            <h3>实时告警 <span v-if="alarmCount > 0" class="alarm-badge">{{ alarmCount }}</span></h3>
+            <button :disabled="chatState.streaming" class="refresh-btn" title="刷新" @click="fetchAlarms">↻</button>
+          </div>
+          <div v-if="alarmsLoading" class="alarm-loading"><div class="mini-spinner"></div><span>加载中...</span></div>
+          <div v-else-if="alarms.length > 0" class="alarm-list-sidebar">
+            <div v-for="alarm in alarms.slice(0, 8)" :key="alarm.alertId" :class="'severity-' + (alarm.severity || 'info').toLowerCase()" class="alarm-card-sidebar" @click="onTroubleshoot(`${alarm.resourceId} 出现告警：${alarm.msg}，请帮我排查根因`)">
+              <div class="alarm-resource">{{ alarm.resourceId }}</div>
+              <div class="alarm-msg">{{ alarm.msg }}</div>
+              <div class="alarm-meta"><span class="alarm-type">{{ alarm.resourceType }}</span><span class="alarm-sev">{{ alarm.severity }}</span></div>
+            </div>
+          </div>
+          <div v-else class="alarm-empty"><span>✅ 暂无告警</span></div>
+        </div>
+
+        <!-- 登录用户信息卡 -->
+        <div v-if="userInfo" class="user-card">
+          <div class="user-avatar">{{ userInfo.username[0].toUpperCase() }}</div>
+          <div class="user-info-text">
+            <div class="user-name">{{ userInfo.username }}</div>
+            <div class="user-tenant">{{ userInfo.tenantId }} · {{ userInfo.deptId }}</div>
+            <div class="user-roles">
+              <span v-for="r in userInfo.roles" :key="r" class="role-tag">{{ r }}</span>
+            </div>
+          </div>
+          <button class="logout-btn" title="退出登录" @click="doLogout">⏻</button>
+        </div>
+      </aside>
+
+      <!-- 中间主区 -->
+      <main class="main">
+        <header class="main-header">
+          <div class="left">
+            <span class="left-title">{{ tabTitle }}</span>
+            <span class="model-tag">{{ userInfo?.roles[0] }}</span>
+          </div>
+          <div class="right">
+            <div v-if="userInfo" class="tenant-info">
+              <div class="info-item">
+                <span class="info-label">租户</span>
+                <span class="info-value">{{ userInfo.tenantId }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">部门</span>
+                <span class="info-value">{{ userInfo.deptId }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">权限</span>
+                <span class="info-value">{{ userInfo.permissions.length }}项</span>
+              </div>
+            </div>
+            <button :title="'切换到' + (theme === 'dark' ? '日间' : '夜间') + '模式'" class="theme-toggle" @click="toggleTheme">
+              {{ theme === 'dark' ? '☀️' : '🌙' }}
+            </button>
+            <button :title="rightPanelOpen ? '隐藏右栏' : '显示右栏'" class="toggle-right" @click="rightPanelOpen = !rightPanelOpen">
+              {{ rightPanelOpen ? '▶' : '◀' }}
+            </button>
+          </div>
+        </header>
+
+        <div class="content">
+          <ChatView v-if="currentTab === 'chat'" :chat-state="chatState" :right-panel-open="rightPanelOpen" :workflow-state="workflowState" @toggle-workflow="showWorkflow" @new-session="newSession" />
+        </div>
+      </main>
+
+      <!-- 右侧面板 -->
+      <aside :class="['sidebar-right', { open: rightPanelOpen }]">
+        <div class="right-tabs">
+          <button :class="['right-tab', { active: rightTab === 'history' }]" @click="rightTab = 'history'">
+            <span>💬</span> 历史
+          </button>
+          <button :class="['right-tab', { active: rightTab === 'workflow' }]" @click="rightTab = 'workflow'">
+            <span>🔄</span> 工作流
+            <span v-if="workflowRunning" class="running-dot"></span>
+          </button>
+        </div>
+        <div class="right-content">
+          <HistoryView v-if="rightTab === 'history'" :current-id="chatState.currentSessionId" :sessions="chatSessions" @delete="deleteSession" @select="loadSession" />
+          <WorkflowView v-else-if="rightTab === 'workflow'" :workflow-state="workflowState" @on-clear="clearWorkflow" />
+        </div>
+      </aside>
+    </template>
+
     <div v-if="toast" class="toast">{{ toast }}</div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import {nextTick, onMounted, reactive, ref} from 'vue'
-import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import {computed, onMounted, reactive, ref} from 'vue'
+import ChatView from './views/ChatView.vue'
+import HistoryView from './views/HistoryView.vue'
+import WorkflowView from './views/WorkflowView.vue'
+import {clearAuth, getUserInfo, hasPermission, isLoggedIn as checkLogin, setAuth} from './utils/auth'
+import {apiFetch, login as apiLogin, setAuthFailedHandler} from './utils/http'
 
-const inputText = ref('')
-const messages = ref<Array<{ role: string; content: string; streaming?: boolean }>>([])
-const streaming = ref(false)
-const backendOnline = ref(false)
-const messagesRef = ref<HTMLElement>()
-const lastQuickAction = ref('')
-const toast = ref('')
-// 工具执行进度：排障过程透明化
-const currentTool = ref('')
-// 流式连接断开后的重试信息
-const needsRetry = ref(false)
-const retryMessage = ref('')
-const retryUserId = ref('')
-
-// 工具能力折叠面板状态（默认收起）
-const isToolsExpanded = ref(false)
-function toggleTools() { isToolsExpanded.value = !isToolsExpanded.value }
-
-// 快捷操作折叠：默认折叠，腾出空间给告警区域
-const isQuickActionsExpanded = ref(false)
-function toggleQuickActions() { isQuickActionsExpanded.value = !isQuickActionsExpanded.value }
-
-// 历史对话折叠（默认展开）
-const isHistoryExpanded = ref(true)
-function toggleHistory() { isHistoryExpanded.value = !isHistoryExpanded.value }
-
-let userId = 'web-user-' + Math.random().toString(36).substring(2, 8)
-// SSE 连接：EventSource 直连后端
-let eventSource: EventSource | null = null
-
-const quickActions = [
-  { icon: '🚨', label: '查看告警', text: '有哪些告警？' },
-  { icon: '🔧', label: 'CPU 排障', text: 'ecs-001 的 CPU 高怎么办？' },
-  { icon: '🧠', label: '内存排查', text: 'ebm-001 是不是内存泄漏？' },
-  { icon: '💰', label: '成本优化', text: 'gpu-002 成本优化建议' }
-]
-
-// ========== 对话历史管理（localStorage 持久化） ==========
-interface ChatSession {
-  id: string
-  title: string
-  messages: Array<{ role: string; content: string; streaming?: boolean }>
-  createdAt: number
+// === 主题管理 ===
+type Theme = 'light' | 'dark'
+function getInitialTheme(): Theme {
+  const stored = localStorage.getItem('theme') as Theme | null
+  if (stored) return stored
+  // 根据时间自动判断：6:00-18:00 日间
+  const hour = new Date().getHours()
+  return (hour >= 6 && hour < 18) ? 'light' : 'dark'
 }
-const STORAGE_KEY = 'cloud-ops-sessions'
-const currentSessionId = ref('')
-const sessions = ref<ChatSession[]>(loadSessions())
+const theme = ref<Theme>(getInitialTheme())
+function applyTheme(t: Theme) {
+  document.documentElement.setAttribute('data-theme', t)
+  localStorage.setItem('theme', t)
+}
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+  applyTheme(theme.value)
+}
+applyTheme(theme.value)
+// 每分钟检查时间，自动切换（仅在用户未手动设置时）
+setInterval(() => {
+  if (!localStorage.getItem('theme')) {
+    const newTheme = (new Date().getHours() >= 6 && new Date().getHours() < 18) ? 'light' : 'dark'
+    if (newTheme !== theme.value) {
+      theme.value = newTheme
+      applyTheme(newTheme)
+    }
+  }
+}, 60000)
 
+const isLoggedIn = ref(checkLogin())
+const userInfo = ref(getUserInfo())
+const currentTab = ref('chat')
+const rightPanelOpen = ref(true)
+const rightTab = ref('workflow')
+const toast = ref('')
+const loginUser = ref('admin')
+const loginPass = ref('admin123')
+const loginErr = ref('')
+const loginLoading = ref(false)
+
+const alarms = ref<any[]>([])
+const alarmsLoading = ref(false)
+const alarmCount = computed(() => alarms.value.length)
+
+interface ChatMsg { role: string; content: string; streaming?: boolean; id: number; mode?: string }
+interface ChatSession { id: string; title: string; messages: ChatMsg[]; createdAt: number }
+const chatState = reactive({
+  messages: [] as ChatMsg[],
+  streaming: false,
+  mode: 'auto' as 'auto' | 'single' | 'multi',
+  currentSessionId: '',
+})
+
+const chatSessions = ref<ChatSession[]>(loadSessions())
 function loadSessions(): ChatSession[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-  } catch { return [] }
+  try { const raw = localStorage.getItem('chat_sessions'); return raw ? JSON.parse(raw) : [] } catch { return [] }
 }
 function saveSessions() {
-  // 只保留 messages 的基本信息（strip streaming flag）
-  const clean = sessions.value.map(s => ({
-    ...s,
-    messages: s.messages.map(m => ({ role: m.role, content: m.content }))
-  }))
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(clean))
+  const clean = chatSessions.value.map(s => ({ ...s, messages: s.messages.map(m => ({ ...m, streaming: false })) }))
+  localStorage.setItem('chat_sessions', JSON.stringify(clean))
 }
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+
+const workflowState = reactive({
+  running: false,
+  agents: [
+    { id: 'triage', name: '问题分诊', nameEn: 'TriageAgent', icon: '🎯', status: 'waiting', duration: 0 },
+    { id: 'alarm', name: '告警分析', nameEn: 'AlarmAnalysisAgent', icon: '🚨', status: 'waiting', duration: 0 },
+    { id: 'resource', name: '资源诊断', nameEn: 'ResourceDiagnosticAgent', icon: '📊', status: 'waiting', duration: 0 },
+    { id: 'knowledge', name: '知识检索', nameEn: 'KnowledgeRetrievalAgent', icon: '📚', status: 'waiting', duration: 0 },
+    { id: 'billing', name: '账单分析', nameEn: 'BillingAnalysisAgent', icon: '💰', status: 'waiting', duration: 0 },
+    { id: 'synthesis', name: '综合分析', nameEn: 'SynthesisAgent', icon: '📋', status: 'waiting', duration: 0 },
+  ],
+  trace: [] as Array<{ agentName: string; durationMs: number; result: string }>,
+  routeLabel: '',
+  finalReport: '',
+  activeTransition: -1,
+})
+const workflowRunning = computed(() => workflowState.running)
+
+const canViewAlarms = computed(() => hasPermission('alarm:read'))
+const canViewRAG = computed(() => hasPermission('rag:read'))
+
+const tabTitle = computed(() => {
+  const titles: Record<string, string> = { chat: '智能排障对话', alarms: '告警列表', rag: '知识库' }
+  return titles[currentTab.value] || ''
+})
+
+function switchTab(tab: string) { currentTab.value = tab; if (tab === 'alarms') fetchAlarms() }
+function showWorkflow() { rightTab.value = 'workflow'; rightPanelOpen.value = true }
+function clearWorkflow() {
+  workflowState.agents = workflowState.agents.map(a => ({ ...a, status: 'waiting', duration: 0 }))
+  workflowState.trace = []; workflowState.routeLabel = ''; workflowState.finalReport = ''; workflowState.activeTransition = -1
 }
-function archiveCurrentSession() {
-  if (messages.value.length === 0) return
-  const firstUser = messages.value.find(m => m.role === 'user')
-  const title = firstUser ? (firstUser.content || '').slice(0, 30) : '新对话'
-  // 更新已有 session 或新建
-  const existing = sessions.value.find(s => s.id === currentSessionId.value)
-  if (existing) {
-    existing.messages = [...messages.value]
-    existing.title = title
-  } else {
-    currentSessionId.value = 'sess-' + Date.now()
-    sessions.value.unshift({
-      id: currentSessionId.value,
-      title,
-      messages: [...messages.value],
-      createdAt: Date.now(),
-      userId: userId,
-    })
+function showToast(msg: string) { toast.value = msg; setTimeout(() => { toast.value = '' }, 2500) }
+
+async function doLogin() {
+  loginLoading.value = true; loginErr.value = ''
+  try {
+    const data = await apiLogin(loginUser.value, loginPass.value)
+    setAuth(data); userInfo.value = data; isLoggedIn.value = true
+    showToast('登录成功')
+  } catch (e) { loginErr.value = (e as Error).message }
+  finally { loginLoading.value = false }
+}
+function doLogout() { clearAuth(); userInfo.value = null; isLoggedIn.value = false }
+function focusPass() { document.querySelector('input[type="password"]')?.focus() }
+
+async function fetchAlarms() {
+  if (!hasPermission('alarm:read')) return
+  alarmsLoading.value = true
+  try { const data = await apiFetch('/api/alarms?limit=20'); alarms.value = data.alarms || [] }
+  catch (e) { console.error(e) } finally { alarmsLoading.value = false }
+}
+
+function onTroubleshoot(msg: string) {
+  currentTab.value = 'chat'
+  setTimeout(() => window.dispatchEvent(new CustomEvent('troubleshoot', { detail: msg })), 100)
+}
+
+function newSession() {
+  if (chatState.messages.length > 0) {
+    const firstUser = chatState.messages.find(m => m.role === 'user')
+    const title = firstUser ? firstUser.content.slice(0, 30) : '新对话'
+    chatSessions.value.unshift({ id: 'sess-' + Date.now(), title, messages: [...chatState.messages], createdAt: Date.now() })
+    if (chatSessions.value.length > 20) chatSessions.value = chatSessions.value.slice(0, 20)
+    saveSessions()
   }
-  // 最多保留 20 条历史
-  if (sessions.value.length > 20) sessions.value = sessions.value.slice(0, 20)
-  saveSessions()
+  chatState.messages = []; chatState.currentSessionId = ''
 }
-function switchSession(id: string) {
-  if (streaming.value) return
-  archiveCurrentSession()
-  const s = sessions.value.find(x => x.id === id)
+function loadSession(id: string) {
+  if (chatState.streaming) return
+  const s = chatSessions.value.find(x => x.id === id)
   if (s) {
-    currentSessionId.value = s.id
-    userId = s.userId || userId
-    messages.value = s.messages.map(m => ({ ...m, streaming: false }))
+    newSession()
+    chatState.currentSessionId = s.id
+    chatState.messages = s.messages.map(m => ({ ...m, streaming: false, id: Date.now() + Math.random() }))
   }
 }
 function deleteSession(id: string) {
-  sessions.value = sessions.value.filter(s => s.id !== id)
-  if (currentSessionId.value === id) {
-    currentSessionId.value = ''
-    messages.value = []
-  }
+  chatSessions.value = chatSessions.value.filter(s => s.id !== id)
+  if (chatState.currentSessionId === id) chatState.currentSessionId = ''
   saveSessions()
 }
 
-// Markdown 渲染器：启用表格、链接、代码高亮
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-  highlight(str: string, lang: string): string {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return '<pre><code class="hljs">' + hljs.highlight(str, { language: lang }).value + '</code></pre>'
-      } catch {
-        // ignore
-      }
-    }
-    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
-  }
-})
-
-/**
- * 内容预处理 — 在交给 markdown-it 渲染之前，修复常见的格式问题
- *
- * 设计原则：只修明确的格式错误，不改变已有的正确格式。
- * 之前的版本过于激进（自动分段、自动加列表符、拆 **bold**），
- * 导致模型输出的正确格式反而被改坏。
- *
- * 只修复两种问题：
- *   1. `##标题` 缺少空格 → `## 标题`
- *   2. `-列表项` 缺少空格 → `- 列表项`
- *   3. `1.列表项` 缺少空格 → `1. 列表项`
- */
-function normalizeContent(raw: string): string {
-  if (!raw) return ''
-
-  let text = raw
-
-  // 1. 保护代码块（``` ... ``` 之间的内容不做任何处理）
-  const codeBlocks: string[] = []
-  text = text.replace(/```[\s\S]*?```/g, (match) => {
-    codeBlocks.push(match)
-    return '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00'
-  })
-
-  // 2. 修复 ATX 标题缺少空格：`##标题` → `## 标题`
-  // CommonMark 规范要求：# 后面必须有一个空格才是标题
-  text = text.replace(/^(#{1,6})([^\s#])/gm, '$1 $2')
-
-  // 2b. 修复行内 ## 标题：模型常输出 `...内容。## 标题` 在同一行
-  // markdown-it 要求 ## 必须在行首才识别为标题，否则显示为字面文本
-  // 在 ## 前插入 \n\n，使其独立成行
-  text = text.replace(/([^\n])((#{1,6})\s)/g, '$1\n\n$2')
-
-  // 3. 修复无序列表缺少空格：`-item` → `- item`
-  text = text.replace(/^(\s*[-*+])([^\s])/gm, '$1 $2')
-
-  // 4. 修复有序列表缺少空格：`1.item` → `1. item`
-  text = text.replace(/^(\s*\d+\.)([^\s])/gm, '$1 $2')
-
-  // 5. 恢复代码块
-  codeBlocks.forEach((block, i) => {
-    text = text.replace('\x00CODEBLOCK' + i + '\x00', block)
-  })
-
-  return text
-}
-
-function renderMarkdown(content: string): string {
-  return md.render(normalizeContent(content || ''))
-}
-
-/**
- * ReAct 推理过程解析器
- *
- * 把 Agent 输出的带标记文本切分成多个 section，前端渲染成不同颜色的卡片。
- *
- * 标记类型：
- *   【思考】    → thinking     蓝色卡片
- *   【工具调用】 → tool         紫色卡片
- *   【观察】    → observation   绿色卡片
- *   【结论】    → conclusion    正常 Markdown 气泡
- *
- * 流式输出时，每次 token 追加都会重新解析整个内容。
- * Vue 的 v-for + key 复用已有 DOM，新 section 追加渲染，不会闪烁。
- */
-type SectionType = 'thinking' | 'tool' | 'observation' | 'conclusion' | 'text'
-interface ReActSection {
-  type: SectionType
-  content: string
-}
-
-const REACT_MARKERS: Record<string, SectionType> = {
-  '【思考】': 'thinking',
-  '【工具调用】': 'tool',
-  '【观察】': 'observation',
-  '【结论】': 'conclusion',
-}
-
-function parseReActSections(raw: string): ReActSection[] {
-  if (!raw) return [{ type: 'text', content: '' }]
-
-  // 匹配所有标记
-  const markerPattern = /【思考】|【工具调用】|【观察】|【结论】/g
-
-  // split 按标记切分，match 取出所有标记
-  const parts = raw.split(markerPattern)
-  const matches = raw.match(markerPattern) || []
-
-  const sections: ReActSection[] = []
-
-  // parts[0] 是第一个标记之前的内容（通常是空字符串）
-  if (parts[0] && parts[0].trim()) {
-    sections.push({ type: 'text', content: parts[0].trim() })
-  }
-
-  // 后续 parts 按标记分类
-  for (let i = 0; i < matches.length; i++) {
-    const marker = matches[i]
-    const content = (parts[i + 1] || '').trim()
-    const type = REACT_MARKERS[marker] || 'text'
-    // conclusion 类型即使内容为空也要保留（标记后面可能还在流式中）
-    // 其他类型内容为空就跳过
-    if (content || type === 'conclusion') {
-      sections.push({ type, content })
-    }
-  }
-
-  // 如果没有任何标记，返回原始内容作为 text
-  return sections.length > 0 ? sections : [{ type: 'text', content: raw }]
-}
-
-/**
- * 流式渲染专用的混合解析器
- *
- * 与 parseReActSections 不同，它区分「已闭合段落」和「正在写的段落」：
- *   - 已闭合段落：该段落后面出现了新的标记（【思考】→【工具调用】说明思考已写完）
- *     → 渲染为 ReAct 卡片，内容稳定不再变化
- *   - 最后一段：没有后续标记 → 仍在流式生成中
- *     → 保持为轻量纯文本 + 光标
- *
- * 这样做的好处：
- *   1. 已完成段落提前以卡片形式展示，视觉上逐步构建
- *   2. 只有最后一段是纯文本，Markdown 编译延迟到该段闭合后才触发
- *   3. 流式完成时，最后一段加入已完成列表，过渡自然
- */
-function getStreamingParsed(raw: string): { completed: ReActSection[]; current: ReActSection | null } {
-  if (!raw) return { completed: [], current: null }
-
-  const markerPattern = /【思考】|【工具调用】|【观察】|【结论】/g
-  const parts = raw.split(markerPattern)
-  const matches = raw.match(markerPattern) || []
-
-  const completed: ReActSection[] = []
-  let current: ReActSection | null = null
-
-  // 处理第一个标记之前的文本
-  if (parts[0] && parts[0].trim()) {
-    if (matches.length > 0) {
-      // 后面有标记 → 这段已闭合
-      completed.push({ type: 'text', content: parts[0].trim() })
-    } else {
-      // 没有标记 → 全部内容都在流式中
-      current = { type: 'text', content: parts[0] }
-      return { completed, current }
-    }
-  }
-
-  // 处理每个标记 + 内容对
-  for (let i = 0; i < matches.length; i++) {
-    const marker = matches[i]
-    const content = (parts[i + 1] || '')
-    const type = REACT_MARKERS[marker] || 'text'
-
-    if (i < matches.length - 1) {
-      // 不是最后一个标记 → 该段已闭合
-      const trimmed = content.trim()
-      if (trimmed) {
-        completed.push({ type, content: trimmed })
-      }
-    } else {
-      // 最后一个标记 → 正在生成中
-      // conclusion 即使为空也保留（标记本身可能刚出现）
-      if (content || type === 'conclusion') {
-        current = { type, content }
-      }
-    }
-  }
-
-  return { completed, current }
-}
-
-/**
- * 流式段落标签映射
- */
-function markerLabel(type: SectionType): string {
-  const labels: Record<string, string> = {
-    thinking: '🧠 思考中…',
-    tool: '🔧 调用中…',
-    observation: '📊 观察中…',
-    conclusion: '📝 结论中…',
-  }
-  return labels[type] || ''
-}
-
-/**
- * 判断一条消息是否是排障结论（应该显示"下载报告"按钮）
- *
- * 判断依据：消息内容包含 ReAct 推理标记（【思考】/【工具调用】/【观察】/【结论】）。
- * 普通问答（如"有哪些告警？"→ 告警列表）不含这些标记，不显示下载按钮。
- */
-function isTroubleshootReport(content: string): boolean {
-  if (!content) return false
-  return /【思考】|【工具调用】|【观察】|【结论】/.test(content)
-}
-
-function showToast(msg: string) {
-  toast.value = msg
-  setTimeout(() => { toast.value = '' }, 2500)
-}
-
-function newChat() {
-  if (streaming.value) { showToast('请等待当前回复完成'); return }
-  archiveCurrentSession()
-  currentSessionId.value = ''
-  messages.value = []
-  lastQuickAction.value = ''
-  inputText.value = ''
-  needsRetry.value = false
-  userId = 'web-user-' + Math.random().toString(36).substring(2, 8)  // ★ 新会话 = 新 Memory key
-  showToast('已开启新对话')
-}
-
-// textarea 自适应高度
-function autoResize() {
-  const el = document.querySelector('.input-wrapper textarea') as HTMLTextAreaElement | null
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 160) + 'px'
-}
-
-async function sendMessage(text: string, isRetry = false) {
-  if (streaming.value && !isRetry) { showToast('正在生成中，请稍候...'); return }
-  if (!text.trim()) return
-
-  const message = text.trim()
-  if (!isRetry) {
-    inputText.value = ''
-    nextTick(autoResize)
-    messages.value.push({ role: 'user', content: message })
-  }
-  // 重试时复用已有的 aiMessage，否则新建
-  let aiMessage = isRetry
-    ? messages.value[messages.value.length - 1]
-    : null
-  if (!aiMessage || aiMessage.role !== 'assistant' || !aiMessage.streaming) {
-    aiMessage = reactive({ role: 'assistant', content: isRetry ? messages.value[messages.value.length - 1]?.content || '' : '', streaming: true })
-    if (!isRetry) messages.value.push(aiMessage)
-  }
-  aiMessage.streaming = true
-  streaming.value = true
-  needsRetry.value = false
-  retryMessage.value = ''
-  currentTool.value = ''
-  const matched = quickActions.find(a => a.text === message)
-  lastQuickAction.value = matched ? matched.text : ''
-  await scrollToBottom()
-
-  if (!isRetry) retryMessage.value = message
-  if (!isRetry) retryUserId.value = userId
-
-  const url = 'http://localhost:8080/api/agent/chat/stream?userId=' + userId + '&message=' + encodeURIComponent(message)
-  eventSource = new EventSource(url)
-
-  // ★ SSE 结构化事件处理（token / tool-start / tool-end / done / error）
-  eventSource.onmessage = function (event) {
-    let evt: { type: string; content?: string; toolName?: string; args?: string; result?: string; message?: string }
-    try {
-      evt = JSON.parse(event.data)
-    } catch {
-      return // 忽略无法解析的数据
-    }
-
-    switch (evt.type) {
-      case 'token':
-        aiMessage.content += (evt.content || '')
-        scrollToBottom()
-        break
-      case 'tool-start':
-        currentTool.value = evt.toolName || ''
-        break
-      case 'tool-end':
-        currentTool.value = ''
-        break
-      case 'done':
-        aiMessage.streaming = false
-        ;(aiMessage as any).stats = { inputTokens: (evt as any).inputTokens || 0, outputTokens: (evt as any).outputTokens || 0, totalTokens: (evt as any).totalTokens || 0, toolCallCount: (evt as any).toolCallCount || 0, firstTokenMs: (evt as any).firstTokenMs || 0 }
-        streaming.value = false
-        backendOnline.value = true
-        currentTool.value = ''
-        archiveCurrentSession()
-        eventSource?.close()
-        eventSource = null
-        break
-      case 'error':
-        aiMessage.content += '\n\n> ⚠️ ' + (evt.message || '')
-        break
-    }
-  }
-
-  eventSource.onerror = function () {
-    if (aiMessage.streaming) {
-      // 连接异常断开 → 显示重试按钮
-      streaming.value = false
-      currentTool.value = ''
-      needsRetry.value = true
-      aiMessage.streaming = false
-      if (aiMessage.content === '') {
-        aiMessage.content = '> ⚠️ 连接失败，请确认后端服务已启动（localhost:8080）'
-        backendOnline.value = false
-        needsRetry.value = false
-      }
-    }
-    eventSource?.close()
-    eventSource = null
-  }
-}
-
-/** 重试：用之前的问题重新连接 */
-function retrySend() {
-  if (!retryMessage.value) return
-  // 移除最后一条 assistant 消息（如果有的话，保留前缀内容）
-  const last = messages.value[messages.value.length - 1]
-  if (last && last.role === 'assistant') {
-    last.content = last.content.replace(/\n\n> ⚠️ 连接已断开.*$/, '')
-  }
-  sendMessage(retryUserId.value ? retryMessage.value : retryMessage.value, true)
-}
-
-// 停止生成
-function stopGeneration() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-    const last = messages.value[messages.value.length - 1]
-    if (last && last.streaming) {
-      last.content += '\n\n> ⏹ 已停止生成'
-      last.streaming = false
-    }
-    streaming.value = false
-    currentTool.value = ''
-    needsRetry.value = false
-    archiveCurrentSession()
-    showToast('已停止生成')
-  }
-}
-
-function handleSend() {
-  if (inputText.value.trim()) {
-    sendMessage(inputText.value)
-  }
-}
-
-async function scrollToBottom() {
-  // ⚠️ 关键：用 requestAnimationFrame 代替 nextTick
-  // nextTick() 是微任务，浏览器在同一帧内执行完所有微任务才绘制，
-  // 导致 for 循环里 100 个 token 的 100 次 nextTick 全在同一帧完成 → 一股脑全出
-  // requestAnimationFrame 是宏任务，每次调用等一帧（约16ms），
-  // 强制浏览器在两个 token 之间绘制一次 → 逐字流式效果
-  await new Promise(resolve => requestAnimationFrame(resolve))
-  if (messagesRef.value) {
-    messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-  }
-}
-
-// ========== SOP 文档弹窗 ==========
-const sopModalVisible = ref(false)
-const sopModalTitle = ref('')
-const sopModalContent = ref('')
-const sopLoading = ref(false)
-
-/**
- * 拦截 markdown-body 内 .md 链接的点击
- * markdown-it 的 linkify 会把 xxx.md 识别成链接（.md 被当作 TLD）
- * 这里拦截点击，阻止浏览器跳转 404，改为弹窗显示文档内容
- */
-function handleDocClick(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  // 向上找最近的 a 标签
-  const a = target.closest('a') as HTMLAnchorElement | null
-  if (!a) return
-  const href = a.getAttribute('href') || ''
-  // 只处理 .md 结尾的链接
-  if (!href.endsWith('.md')) return
-  e.preventDefault()
-  // 提取文件名（去掉路径前缀，只留文件名）
-  const docName = href.split('/').pop() || href
-  openSopDoc(docName)
-}
-
-/**
- * 打开 SOP 文档弹窗
- * 调用后端 /api/sop/{docName} 获取文档全文
- */
-async function openSopDoc(docName: string) {
-  sopModalVisible.value = true
-  sopModalTitle.value = docName
-  sopModalContent.value = ''
-  sopLoading.value = true
-
-  try {
-    const res = await fetch('/api/sop/' + encodeURIComponent(docName))
-    if (!res.ok) throw new Error('HTTP ' + res.status)
-    const text = await res.text()
-    if (text.startsWith('[错误]')) {
-      sopModalContent.value = '> ⚠️ ' + text
-    } else {
-      sopModalContent.value = text
-    }
-  } catch (err) {
-    sopModalContent.value = '> ⚠️ 文档加载失败: ' + (err as Error).message
-  } finally {
-    sopLoading.value = false
-  }
-}
-
-function closeSop() {
-  sopModalVisible.value = false
-}
-
-// 按 ESC 关闭弹窗
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && sopModalVisible.value) closeSop()
-}
-
-// ========== 告警列表 ==========
-interface Alarm {
-  alertId: string
-  resourceId: string
-  resourceType: string
-  severity: string
-  msg: string
-  status: string
-  triggerTime: string
-}
-const alarms = ref<Alarm[]>([])
-const alarmsLoading = ref(false)
-
-async function fetchAlarms() {
-  alarmsLoading.value = true
-  try {
-    const res = await fetch('/api/alarms?limit=10')
-    if (!res.ok) throw new Error('HTTP ' + res.status)
-    const data = await res.json()
-    alarms.value = data.alarms || []
-  } catch (err) {
-    console.error('告警加载失败:', err)
-  } finally {
-    alarmsLoading.value = false
-  }
-}
-
-/**
- * 一键排障：点击告警卡片上的"排障"按钮
- * 自动构造排障消息发给 Agent
- */
-function startTroubleshoot(alarm: Alarm) {
-  const message = `${alarm.resourceId} 出现告警：${alarm.msg}，请帮我排查根因并给出处置建议`
-  sendMessage(message)
-}
-
-/**
- * T29: 下载排障报告
- *
- * 把对话中的 ReAct 推理过程（思考 → 工具调用 → 观察结果）+ 结论
- * 拼装成结构化 Markdown 文件，通过 Blob 触发浏览器下载。
- *
- * 纯前端实现，不依赖后端接口。
- */
-function downloadReport(content: string, index: number) {
-  const sections = parseReActSections(content)
-  const now = new Date()
-  const ts = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
-
-  let md = `# 排障报告\n\n`
-  md += `> 生成时间：${ts}\n`
-  md += `> 生成工具：云运维智能助手 (ReAct Agent)\n\n`
-  md += `---\n\n`
-
-  // 找到对应的用户提问（assistant 消息的前一条通常是 user）
-  const userMsg = index > 0 ? messages.value[index - 1] : null
-  if (userMsg && userMsg.role === 'user') {
-    md += `## 问题描述\n\n${userMsg.content}\n\n---\n\n`
-  }
-
-  // ★ 仅提取排障结论，过滤掉所有 ReAct 推理链中间步骤
-  //   （思考/工具调用/观察结果 属于 Agent 内部推理过程，不写入最终报告）
-  const conclusionParts: string[] = []
-  for (const section of sections) {
-    if (section.type === 'thinking' || section.type === 'tool' || section.type === 'observation') {
-      continue  // 跳过推理链中间步骤
-    }
-    // conclusion / text 类型 → 排障结论
-    if (section.content.trim()) {
-      conclusionParts.push(section.content.trim())
-    }
-  }
-
-  // 拼接所有结论片段
-  let conclusionText = conclusionParts.join('\n\n')
-
-  // 兜底：如果存在 ReAct 标记但没解析出结论内容（解析异常），
-  //       或者完全没有 ReAct 标记，则用原始 content 作为结论
-  if (!conclusionText) {
-    conclusionText = content.trim()
-  }
-
-  md += `## 排障结论\n\n${conclusionText}\n\n`
-  md += `---\n\n*本报告由云运维智能助手自动生成*\n`
-
-  // 触发下载
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `排障报告_${now.toISOString().slice(0, 10)}_${now.getHours()}${String(now.getMinutes()).padStart(2, '0')}.md`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-  showToast('报告已下载')
-}
-
-onMounted(async () => {
-  // 全局键盘事件
-  window.addEventListener('keydown', onKeydown)
-  window.addEventListener('keydown', onGlobalShortcut)
-  // 拉取告警列表
-  fetchAlarms()
-  try {
-    const res = await fetch('/health')
-    if (res.ok) backendOnline.value = true
-  } catch {
-    backendOnline.value = false
-  }
-})
-
-/** 全局快捷键：Ctrl+K 新建对话 · Ctrl+/ 聚焦输入框 · Ctrl+Enter 发送 */
-function onGlobalShortcut(e: KeyboardEvent) {
-  const target = e.target as HTMLElement
-  const isInput = target.tagName === 'TEXTAREA' || target.tagName === 'INPUT'
-  // Ctrl+K：新建对话
-  if (e.ctrlKey && e.key === 'k') {
-    e.preventDefault()
-    newChat()
-  }
-  // Ctrl+/：聚焦输入框
-  if (e.ctrlKey && e.key === '/') {
-    e.preventDefault()
-    const el = document.querySelector('.input-wrapper textarea') as HTMLTextAreaElement | null
-    el?.focus()
-  }
-  // Ctrl+Enter：发送（当焦点在输入框时）
-  if (e.ctrlKey && e.key === 'Enter' && isInput) {
-    e.preventDefault()
-    handleSend()
-  }
-}
+setAuthFailedHandler(() => { isLoggedIn.value = false; userInfo.value = null; loginErr.value = 'Token已过期，请重新登录' })
+onMounted(() => { if (isLoggedIn.value && canViewAlarms.value) fetchAlarms() })
 </script>
 
 <style scoped>
-/* 组件级样式：textarea 自适应 */
-.input-wrapper textarea {
-  width: 100%;
-}
+/* === 3栏布局 === */
+.app { display: grid; grid-template-columns: 240px 1fr 360px; height: 100vh; transition: grid-template-columns 0.3s; }
+.app:has(.sidebar-right:not(.open)) { grid-template-columns: 240px 1fr 0; }
 
-/* ========== 响应统计面板 ========== */
-.stats-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 13px;
-  color: #94a3b8;
-  user-select: none;
-}
-.stats-item {
-  white-space: nowrap;
-}
-.stats-divider {
-  font-size: 9px;
-  opacity: 0.5;
-}
+/* === 左侧导航栏（宽栏） === */
+.sidebar-left { background: var(--bg-elevated); border-right: 1px solid var(--glass-border); display: flex; flex-direction: column; backdrop-filter: blur(24px); overflow: hidden; }
+.brand-area { padding: 20px 18px; border-bottom: 1px solid var(--glass-border); display: flex; align-items: center; gap: 12px; }
+.brand-logo { width: 40px; height: 40px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 4px 16px rgba(99,102,241,0.4); }
+.brand-text { flex: 1; }
+.brand-title { font-size: 15px; font-weight: 700; background: linear-gradient(135deg, #6366f1, #ec4899); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.brand-sub { font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
 
-.section-header h3 {
-  font-size: 14px;
-  margin: 0;
+.nav-list { flex-shrink: 0; padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 13px; cursor: pointer; text-align: left; transition: all 0.2s; }
+.nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent-hover); border-color: var(--thought-border); }
+.nav-item .icon { font-size: 16px; width: 24px; text-align: center; flex-shrink: 0; }
+.nav-item .label { flex: 1; font-weight: 500; }
+.nav-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-hover); font-weight: 600; }
+.nav-badge.danger { background: var(--danger); color: white; }
+.nav-item-new { color: var(--accent-hover); border: 1px dashed var(--thought-border); }
+.nav-item-new:hover { background: var(--accent-soft); border-color: var(--accent); border-style: solid; }
+
+/* 告警区（左侧栏内嵌） */
+.alarm-section { flex: 1; padding: 10px 12px; overflow-y: auto; min-height: 0; }
+.alarm-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.alarm-section-header h3 { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
+.alarm-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--danger); color: white; margin-left: 4px; }
+.refresh-btn { background: none; border: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 12px; width: 22px; height: 22px; border-radius: 5px; cursor: pointer; }
+.refresh-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.alarm-loading { display: flex; align-items: center; gap: 6px; padding: 16px 0; color: var(--text-tertiary); font-size: 11px; justify-content: center; }
+.mini-spinner { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.alarm-list-sidebar { display: flex; flex-direction: column; gap: 6px; }
+.alarm-card-sidebar { padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--glass-border); border-left: 3px solid var(--info); border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+.alarm-card-sidebar:hover { transform: translateX(2px); border-color: var(--accent); }
+.severity-critical { border-left-color: #ef4444 !important; background: rgba(239,68,68,0.08) !important; }
+.severity-warning { border-left-color: #f59e0b !important; }
+.alarm-card-sidebar .alarm-resource { font-size: 11px; font-weight: 600; color: var(--text-primary); }
+.alarm-card-sidebar .alarm-msg { font-size: 10px; color: var(--text-secondary); margin: 1px 0 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.alarm-card-sidebar .alarm-meta { display: flex; gap: 6px; }
+.alarm-card-sidebar .alarm-type, .alarm-card-sidebar .alarm-sev { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--bg-input); color: var(--text-tertiary); }
+.alarm-empty { text-align: center; padding: 16px 0; color: var(--text-tertiary); font-size: 11px; }
+
+/* 用户卡片 */
+.user-card { margin: 10px 12px; padding: 12px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start; position: relative; backdrop-filter: blur(16px); }
+.user-avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #8b5cf6); display: flex; align-items: center; justify-content: center; font-size: 14px; color: white; font-weight: 600; flex-shrink: 0; }
+.user-info-text { flex: 1; min-width: 0; }
+.user-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.user-tenant { font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
+.user-roles { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 3px; }
+.role-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: var(--accent-soft); color: var(--accent-hover); }
+.logout-btn { position: absolute; top: 8px; right: 8px; background: none; border: none; color: var(--text-tertiary); font-size: 13px; cursor: pointer; padding: 2px 4px; }
+.logout-btn:hover { color: var(--danger); }
+
+/* === 中间主区 === */
+.main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.main-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid (var(--glass-border)); background: var(--bg-elevated); backdrop-filter: blur(24px); }
+.main-header .left { display: flex; align-items: center; gap: 10px; }
+.left-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.model-tag { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-hover); font-weight: 500; }
+.main-header .right { display: flex; align-items: center; gap: 10px; }
+.tenant-info { display: flex; gap: 12px; padding: 6px 12px; background: var(--bg-input); border: 1px solid var(--glass-border); border-radius: 8px; }
+.info-item { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.info-label { font-size: 9px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; }
+.info-value { font-size: 11px; color: var(--text-primary); font-weight: 500; font-family: 'JetBrains Mono', monospace; }
+.theme-toggle, .toggle-right { width: 30px; height: 30px; background: var(--bg-input); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-secondary); cursor: pointer; font-size: 14px; transition: all 0.2s; }
+.theme-toggle:hover, .toggle-right:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.content { flex: 1; overflow: hidden; }
+
+/* === 右侧面板 === */
+.sidebar-right { background: var(--bg-elevated); border-left: 1px solid var(--glass-border); display: flex; flex-direction: column; overflow: hidden; backdrop-filter: blur(24px); transition: all 0.3s; }
+.sidebar-right:not(.open) { display: none; }
+.right-tabs { display: flex; border-bottom: 1px solid var(--glass-border); padding: 8px; gap: 4px; }
+.right-tab { flex: 1; padding: 7px 10px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--text-tertiary); font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; transition: all 0.2s; position: relative; }
+.right-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.right-tab.active { background: var(--accent-soft); color: var(--accent-hover); border-color: var(--thought-border); }
+.running-dot { width: 6px; height: 6px; background: var(--warning); border-radius: 50%; animation: pulse 1s infinite; }
+.right-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+/* === 登录页 === */
+.login-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-gradient); z-index: 999; }
+.login-box { width: 380px; background: var(--bg-elevated); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); padding: 40px; backdrop-filter: blur(24px) saturate(180%); box-shadow: var(--glass-shadow); }
+.login-logo { text-align: center; font-size: 44px; margin-bottom: 16px; }
+.login-title { font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 4px; color: var(--text-primary); }
+.login-sub { font-size: 12px; color: var(--text-tertiary); text-align: center; margin-bottom: 28px; }
+.form-group { margin-bottom: 16px; }
+.form-label { font-size: 12px; color: var(--text-tertiary); margin-bottom: 6px; display: block; }
+.form-input { width: 100%; padding: 10px 12px; background: var(--bg-input); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 14px; outline: none; transition: border 0.15s; }
+.form-input:focus { border-color: var(--accent); }
+.login-btn { width: 100%; padding: 10px; background: var(--user-bubble); color: white; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; box-shadow: 0 4px 14px rgba(99,102,241,0.35); transition: all 0.2s; }
+.login-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(99,102,241,0.5); }
+.login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.login-err { color: var(--danger); font-size: 12px; text-align: center; margin-top: 8px; min-height: 16px; }
+.login-hint { font-size: 11px; color: var(--text-tertiary); text-align: center; margin-top: 16px; line-height: 1.6; }
+.login-hint code { background: var(--bg-input); padding: 2px 6px; border-radius: 4px; color: var(--accent-hover); }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+@media (max-width: 1200px) {
+  .app { grid-template-columns: 200px 1fr 320px; }
 }
-.section-header h3 .alarm-count-badge {
-  font-size: 13px;
+@media (max-width: 1024px) {
+  .app { grid-template-columns: 200px 1fr 0; }
+  .sidebar-right { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; z-index: 100; box-shadow: -8px 0 32px rgba(0,0,0,0.2); }
+  .sidebar-right:not(.open) { transform: translateX(100%); }
+  .tenant-info { gap: 8px; padding: 4px 10px; }
+}
+@media (max-width: 768px) {
+  .app { grid-template-columns: 60px 1fr; }
+  .sidebar-left { padding: 0; }
+  .brand-text, .nav-item .label, .nav-badge, .user-info-text, .logout-btn { display: none; }
+  .brand-area { justify-content: center; padding: 16px 0; }
+  .nav-item { justify-content: center; padding: 10px; }
+  .user-card { margin: 10px 8px; padding: 8px; justify-content: center; }
+  .tenant-info { display: none; }
 }
 </style>
