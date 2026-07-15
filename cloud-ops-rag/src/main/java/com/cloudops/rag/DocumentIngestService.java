@@ -120,7 +120,18 @@ public class DocumentIngestService {
                          String content = Files.readString(p);
                          Metadata metadata = new Metadata();
                          metadata.put("source", p.getFileName().toString());
+
+                         // ★ 新增: 权限标签
+                         DocumentPathMapping mapping = resolvePathMapping(p);
+                         metadata.put("tenant_id", mapping.tenantId());
+                         metadata.put("dept_id", mapping.deptId());
+                         metadata.put("access_level", mapping.accessLevel());
+                         metadata.put("category", mapping.category());
+
                          Document doc = Document.from(content, metadata);
+                         log.info("加载文档: {} ({}字符, 权限: {}/{})",
+                                 p.getFileName(), content.length(), mapping.accessLevel(), mapping.tenantId());
+
                          documents.add(doc);
                          log.info("加载文档: {} ({}字符)", p.getFileName(), content.length());
                      } catch (IOException e) {
@@ -132,4 +143,93 @@ public class DocumentIngestService {
         }
         return documents;
     }
+
+    /**
+     * 根据文档路径解析权限标签
+     *
+     * 路径模式:
+     *   docs/runbooks/alert-cpu-high.md
+     *     → public（全局通用SOP）
+     *
+     *   docs/runbooks/tenant-001/xxx.md
+     *     → tenant级，tenant-001可见
+     *
+     *   docs/runbooks/tenant-001/ops/xxx.md
+     *     → dept级，tenant-001的dept-prod-ops可见
+     *
+     *   docs/runbooks/tenant-003/xxx.md
+     *     → tenant级，tenant-003可见
+     */
+    private DocumentPathMapping resolvePathMapping(Path docPath) {
+        String relativePath = docPath.toString()
+                .replace(docsPath, "")
+                .replace("\\", "/");
+
+        // 去掉开头的 /
+        if (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+        }
+
+        String[] parts = relativePath.split("/");
+
+        // 情况1: 直接在 runbooks/ 下 → public
+        if (parts.length == 1) {
+            return new DocumentPathMapping(
+                    "public", "public", "public", resolveCategory(parts[0])
+            );
+        }
+
+        // 情况2: tenant-xxx/xxx.md → tenant级
+        if (parts.length == 2) {
+            String tenantId = parts[0];  // "tenant-001"
+            return new DocumentPathMapping(
+                    tenantId, "public", "tenant", resolveCategory(parts[1])
+            );
+        }
+
+        // 情况3: tenant-xxx/dept-xxx/xxx.md → dept级
+        if (parts.length >= 3) {
+            String tenantId = parts[0];  // "tenant-001"
+            String deptFolder = parts[1]; // "ops" → 映射为 "dept-prod-ops"
+            String deptId = mapDeptFolder(tenantId, deptFolder);
+            return new DocumentPathMapping(
+                    tenantId, deptId, "dept", resolveCategory(parts[2])
+            );
+        }
+
+        // 默认: public
+        return new DocumentPathMapping("public", "public", "public", "general");
+    }
+
+    /**
+     * 从文件名推断文档分类
+     */
+    private String resolveCategory(String fileName) {
+        String name = fileName.toLowerCase();
+        if (name.startsWith("alert-")) return "alarm";
+        if (name.startsWith("docker-")) return "docker";
+        if (name.startsWith("k8s-")) return "k8s";
+        if (name.startsWith("sop-")) return "sop";
+        return "general";
+    }
+
+    /**
+     * 部门文件夹名 → 部门ID映射
+     */
+    private String mapDeptFolder(String tenantId, String folder) {
+        // 简化映射: folder "ops" → "{tenant}-ops" 格式
+        // 如 tenant-001/ops/ → dept-prod-ops
+        return switch (tenantId) {
+            case "tenant-001" -> switch (folder) {
+                case "ops" -> "dept-prod-ops";
+                case "fin" -> "dept-prod-fin";
+                default -> "dept-prod-ops";
+            };
+            case "tenant-002" -> "dept-test-ops";
+            case "tenant-003" -> "dept-ai-ops";
+            case "tenant-004" -> "dept-bigdata-ops";
+            default -> "dept-prod-ops";
+        };
+    }
+
 }
