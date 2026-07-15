@@ -1,6 +1,7 @@
 package com.cloudops.controller;
 
 import com.cloudops.agent.OpsAssistant;
+import com.cloudops.agent.workflow.WorkflowOrchestrator;
 import com.cloudops.guardrail.InputGuardrail;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.output.TokenUsage;
@@ -18,6 +19,7 @@ import reactor.core.publisher.FluxSink;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +42,9 @@ public class ChatController {
     private final OpsAssistant opsAssistant;
     private final InputGuardrail inputGuardrail;
     private final ObjectMapper objectMapper;
+    // === 新增注入 ===
+    private final WorkflowOrchestrator workflowOrchestrator;
+
 
     @GetMapping("/chat")
     @PreAuthorize("hasAuthority('agent:chat')")
@@ -288,4 +293,55 @@ public class ChatController {
     private String truncate(String s) {
         return s != null && s.length() > 50 ? s.substring(0, 50) + "..." : s;
     }
+
+
+    /**
+     * 多Agent工作流对话（同步）
+     * POST /api/agent/workflow/chat
+     *
+     * 与 /api/agent/chat 的区别:
+     *   - /chat: 单一ReAct Agent，一个Agent处理所有问题
+     *   - /workflow/chat: 多Agent工作流，分诊→分析→检索→综合
+     */
+    @PostMapping("/workflow/chat")
+    @PreAuthorize("hasAuthority('agent:chat')")
+    public Map<String, Object> workflowChat(@RequestBody Map<String, String> body) {
+        String message = body.get("message");
+        // memoryId = tenantId:userId，与单Agent模式保持一致
+        String memoryId = com.cloudops.security.context.SecurityContext.getTenantId()
+                + ":" + com.cloudops.security.context.SecurityContext.getUserId();
+
+        long startTime = System.currentTimeMillis();
+        log.info("[Workflow-Chat] 收到请求, memoryId={}, message={}", memoryId, truncate(message));
+
+        try {
+            WorkflowOrchestrator.WorkflowResult result = workflowOrchestrator.execute(memoryId, message);
+            long costMs = System.currentTimeMillis() - startTime;
+
+            // 构建执行轨迹摘要
+            List<Map<String, Object>> trace = result.context().getExecutionTrace().stream()
+                    .map(r -> Map.<String, Object>of("agent", r.agentName(), "durationMs", r.durationMs()))
+                    .toList();
+
+            log.info("[Workflow-Chat] 完成, 耗时={}ms, 步骤={}", costMs, trace.size());
+
+            return Map.of(
+                    "status", "success",
+                    "memoryId", memoryId,
+                    "reply", result.finalReport(),
+                    "costMs", costMs,
+                    "workflowTrace", trace
+            );
+        } catch (Exception e) {
+            long costMs = System.currentTimeMillis() - startTime;
+            log.error("[Workflow-Chat] 工作流执行失败, memoryId={}", memoryId, e);
+            return Map.of(
+                    "status", "error",
+                    "memoryId", memoryId,
+                    "error", e.getMessage(),
+                    "costMs", costMs
+            );
+        }
+    }
+
 }
