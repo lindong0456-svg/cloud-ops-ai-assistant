@@ -1,6 +1,7 @@
 package com.cloudops.tool;
 
 import com.cloudops.entity.MockResourceLoad;
+import com.cloudops.tool.annotation.RequiredPermission;
 import com.cloudops.skill.ResourceLoadSkill;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -27,19 +28,21 @@ public class ResourceLoadTool extends AbstractTool {
     /**
      * 查某资源最近N天的负载（CPU/内存均值+峰值）
      */
+    @RequiredPermission("resource:read")
     @Tool("查询指定资源最近N天的CPU和内存负载，返回每天的均值和峰值利用率")
     public List<MockResourceLoad> queryLoad(
             @P("资源ID，如ecs-001") String resourceId,
             @P("查询天数，如7") int days
     ) {
-        return execute("queryLoad", () -> resourceLoadSkill.searchLoad(resourceId, days)).getData();
+        return executeOrThrow("queryLoad", () -> resourceLoadSkill.searchLoad(resourceId, days));
     }
 
     /**
      * 查某资源最新一天的负载快照
      */
+    @RequiredPermission("resource:read")
     @Tool("查询指定资源最新一天的CPU和内存负载快照")
     public MockResourceLoad queryLatestLoad(@P("资源ID，如ecs-001") String resourceId) {
-        return execute("queryLatestLoad", () -> resourceLoadSkill.searchLatestLoad(resourceId)).getData();
+        return executeOrThrow("queryLatestLoad", () -> resourceLoadSkill.searchLatestLoad(resourceId));
     }
 }

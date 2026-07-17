@@ -1,6 +1,7 @@
 package com.cloudops.tool;
 
 import com.cloudops.entity.MockResourceRelation;
+import com.cloudops.tool.annotation.RequiredPermission;
 import com.cloudops.skill.ResourceRelationSkill;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -26,19 +27,21 @@ public class ResourceRelationTool extends AbstractTool {
     /**
      * 查某资源的所有关联资源（直接关联，1层，不递归）
      */
+    @RequiredPermission("resource:read")
     @Tool("查询指定资源关联的所有资源列表，如云主机挂载的云盘、绑定的弹性IP、挂载的NAS等")
     public List<MockResourceRelation> queryRelation(@P("资源ID，如ecs-001") String resourceId) {
-        return execute("queryRelation", () -> resourceRelationSkill.searchRelation(resourceId)).getData();
+        return executeOrThrow("queryRelation", () -> resourceRelationSkill.searchRelation(resourceId));
     }
 
     /**
      * 按关联类型过滤（只看挂载的盘 / 只看绑定的EIP）
      */
+    @RequiredPermission("resource:read")
     @Tool("按关联类型查询资源关系，relationType可选：mount(挂载云盘)、eip(弹性IP)、nas(文件存储)、gpu_bind(GPU绑定)、share(共享)")
     public List<MockResourceRelation> queryRelationByType(
             @P("资源ID") String resourceId,
             @P("关联类型：mount/eip/nas/gpu_bind/share") String relationType
     ) {
-        return execute("queryRelationByType", () -> resourceRelationSkill.searchByType(resourceId, relationType)).getData();
+        return executeOrThrow("queryRelationByType", () -> resourceRelationSkill.searchByType(resourceId, relationType));
     }
 }

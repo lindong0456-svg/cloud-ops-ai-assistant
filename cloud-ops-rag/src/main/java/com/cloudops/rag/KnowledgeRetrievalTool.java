@@ -1,5 +1,7 @@
 package com.cloudops.rag;
 
+import com.cloudops.tool.ToolResult;
+import com.cloudops.tool.annotation.RequiredPermission;
 import com.cloudops.tool.AbstractTool;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -31,8 +33,9 @@ public class KnowledgeRetrievalTool extends AbstractTool {
      * 搜索运维知识库
      * 当用户问"怎么处理""有没有SOP""这种情况怎么办"时，AI 会调这个方法
      */
+    @RequiredPermission("rag:read")
     @Tool("搜索运维知识库(SOP文档)，返回相关的处置方案和操作步骤。输入自然语言查询，如'CPU高怎么办''磁盘满怎么处理'")
-    public String searchKnowledge(@P("查询内容，自然语言描述问题") String query) {
+    public ToolResult<String> searchKnowledge(@P("查询内容，自然语言描述问题") String query) {
         return execute("searchKnowledge", () -> {
             List<KnowledgeChunk> chunks = knowledgeRetrievalService.hybridSearch(query);
             if (chunks.isEmpty()) {
@@ -53,6 +56,6 @@ public class KnowledgeRetrievalTool extends AbstractTool {
                 sb.append(content).append("\n\n");
             }
             return sb.toString();
-        }).getData();
+        });
     }
 }

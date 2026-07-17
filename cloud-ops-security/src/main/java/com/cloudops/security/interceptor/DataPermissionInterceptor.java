@@ -2,6 +2,7 @@ package com.cloudops.security.interceptor;
 
 import com.baomidou.mybatisplus.core.toolkit.PluginUtils;
 import com.baomidou.mybatisplus.extension.plugins.inner.InnerInterceptor;
+import com.cloudops.security.context.RequestContextStore;
 import com.cloudops.security.context.SecurityContext;
 import com.cloudops.security.context.UserContext;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,9 @@ import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
+
+import java.util.Map;
+import java.util.Set;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -55,13 +59,33 @@ public class DataPermissionInterceptor implements InnerInterceptor {
             "chat_memory"
     );
 
+    /**
+     * 表级部门过滤旁路规则：哪些角色在查哪些表时可以跳过部门过滤。
+     * 设计意图：财务需要跨部门看账单（一个租户下所有部门的费用），
+     * 但不应跨部门看告警/资源。此规则使财务角色查询账单表时只按租户过滤。
+     */
+    private static final Map<String, Set<String>> DEPT_BYPASS =
+            Map.of("mock_billing_stream", Set.of("FINANCE_USER"));
+
     @Override
     public void beforeQuery(Executor executor, MappedStatement ms, Object parameter,
                             RowBounds rowBounds, ResultHandler resultHandler, BoundSql boundSql) throws SQLException {
-        // 1. 获取当前用户上下文
+        // 1. 获取当前用户上下文（优先 ThreadLocal，回退到请求级存储）
         UserContext user = SecurityContext.get();
         if (user == null) {
-            // 未登录（如登录接口本身），不拦截
+            // 尝试从参数中提取 userId（MyBatis Mapper 方法可能传入）
+            String userId = extractUserId(parameter);
+            user = RequestContextStore.get(userId);
+        }
+        if (user == null) {
+            // ★ 跨线程兜底：遍历 RequestContextStore（LangChain4j 工作线程上 ThreadLocal 不可用）
+            for (UserContext ctx : RequestContextStore.getAll()) {
+                user = ctx;
+                break; // 取第一个活跃上下文（通常只有一个）
+            }
+        }
+        if (user == null) {
+            // 未登录或上下文未传播（如登录接口本身），不拦截
             return;
         }
 
@@ -122,8 +146,8 @@ public class DataPermissionInterceptor implements InnerInterceptor {
                 new StringValue(user.tenantId())
         );
 
-        if (user.roles().contains("TENANT_ADMIN")) {
-            // TENANT_ADMIN: 只按租户过滤
+        if (user.roles().contains("TENANT_ADMIN") || canBypassDept(plainSelect, user)) {
+            // TENANT_ADMIN / 表级旁路规则：只按租户过滤（跨部门可见）
             plainSelect.setWhere(
                     wrapWithAnd(plainSelect.getWhere(), tenantCondition)
             );
@@ -154,5 +178,61 @@ public class DataPermissionInterceptor implements InnerInterceptor {
             return addition;
         }
         return new AndExpression(existing, addition);
+    }
+
+    /**
+     * 检查当前用户角色是否允许在查询该表时跳过部门过滤。
+     */
+    private boolean canBypassDept(PlainSelect plainSelect, UserContext user) {
+        if (plainSelect.getFromItem() instanceof Table table) {
+            String tableName = table.getName().toLowerCase();
+            System.out.println("===DEPT_BYPASS CHECK: table=" + tableName + " roles=" + user.roles() + " DEPT_BYPASS=" + DEPT_BYPASS);
+            Set<String> bypassRoles = DEPT_BYPASS.get(tableName);
+            if (bypassRoles != null) {
+                System.out.println("===DEPT_BYPASS HIT: bypassRoles=" + bypassRoles);
+                return user.roles().stream().anyMatch(bypassRoles::contains);
+            }
+        } else {
+            System.out.println("===DEPT_BYPASS getFromItem NOT Table: " + plainSelect.getFromItem().getClass().getSimpleName());
+        }
+        return false;
+    }
+
+    /**
+     * 从 MyBatis 参数中提取 userId
+     * 支持直接传 String 或 Map<String, Object> 含 userId key 的情况
+     */
+    private String extractUserId(Object parameter) {
+        if (parameter instanceof String) {
+            return (String) parameter;
+        }
+        if (parameter instanceof Map) {
+            try {
+                // MyBatis ParamMap.get() 对不存在的 key 抛 BindingException 而非返回 null
+                Object val = ((Map<?, ?>) parameter).get("userId");
+                return val != null ? val.toString() : null;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        // ChatMessageMapper 等可能用 wrapper 对象
+        try {
+            // 反射取 memoryId / sessionId 字段（MysqlChatMemoryStore 用这些）
+            java.lang.reflect.Field f = null;
+            Class<?> clazz = parameter.getClass();
+            for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
+                String name = field.getName().toLowerCase();
+                if (name.contains("session") || name.contains("memory") || name.contains("user")) {
+                    f = field;
+                    break;
+                }
+            }
+            if (f != null) {
+                f.setAccessible(true);
+                Object val = f.get(parameter);
+                return val != null ? val.toString() : null;
+            }
+        } catch (Exception ignored) { }
+        return null;
     }
 }

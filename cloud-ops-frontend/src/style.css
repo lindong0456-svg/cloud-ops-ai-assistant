@@ -4,7 +4,8 @@
  * ============================================================ */
 
 /* ==================== 设计令牌 ==================== */
-:root {
+:root,
+[data-theme="dark"] {
   /* 背景层（深空蓝紫渐变） */
   --bg-base: #0a0b14;
   --bg-gradient: radial-gradient(ellipse at top left, #1a1530 0%, transparent 50%),
@@ -60,6 +61,58 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 20px;
+}
+
+/* ==================== 亮色主题 ==================== */
+[data-theme="light"] {
+  --bg-base: #f4f6fc;
+  --bg-gradient: linear-gradient(160deg, #eef1fa 0%, #f0f2f8 40%, #f7f8fb 100%);
+  --bg-elevated: rgba(255, 255, 255, 0.88);
+  --bg-card: rgba(255, 255, 255, 0.92);
+  --bg-input: rgba(240, 243, 250, 0.95);
+  --bg-hover: rgba(99, 102, 241, 0.06);
+
+  --glass-blur: 20px;
+  --glass-border: rgba(15, 23, 42, 0.08);
+  --glass-border-strong: rgba(15, 23, 42, 0.14);
+  --glass-shadow: 0 4px 24px rgba(15, 23, 42, 0.10);
+
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
+
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+
+  --accent: #4f46e5;
+  --accent-hover: #6366f1;
+  --accent-soft: rgba(79, 70, 229, 0.08);
+  --accent-gradient: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #db2777 100%);
+  --accent-gradient-hover: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+
+  --user-bubble: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  --ai-bubble: rgba(255, 255, 255, 0.85);
+
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #2563eb;
+
+  --thought-bg: rgba(79, 70, 229, 0.06);
+  --thought-border: rgba(79, 70, 229, 0.20);
+  --action-bg: rgba(217, 119, 6, 0.06);
+  --action-border: rgba(217, 119, 6, 0.20);
+  --observation-bg: rgba(5, 150, 105, 0.06);
+  --observation-border: rgba(5, 150, 105, 0.20);
+}
+
+/* 全局主题切换过渡（仅过渡背景和颜色相关属性） */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: background-color 0.35s ease, border-color 0.35s ease, color 0.25s ease,
+               box-shadow 0.25s ease, fill 0.25s ease !important;
 }
 
 /* ==================== 重置 ==================== */
@@ -258,6 +311,11 @@ body {
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-tertiary);
+  margin-top: auto;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  position: sticky;
+  bottom: 0;
 }
 .status-row {
   display: flex; align-items: center; gap: 8px;
@@ -297,6 +355,8 @@ body {
   backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   flex-shrink: 0;
+  position: relative;
+  z-index: 10;
 }
 .main-header .left {
   display: flex; align-items: center; gap: 12px;
@@ -1225,6 +1285,16 @@ body {
   padding: 20px 0;
   color: var(--text-tertiary, #6b7280);
   font-size: 12px;
+}
+
+/* 无权限查看告警的占位提示 */
+.alarm-empty--locked {
+  color: var(--text-secondary, #9ca3af);
+  opacity: 0.7;
+  font-size: 12px;
+  border: 1px dashed var(--border-color, rgba(255,255,255,0.12));
+  border-radius: 10px;
+  margin: 4px 2px;
 }
 
 /* ============================================================

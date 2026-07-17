@@ -1,6 +1,7 @@
 package com.cloudops.tool;
 
 import com.cloudops.entity.MockBillingStream;
+import com.cloudops.tool.annotation.RequiredPermission;
 import com.cloudops.skill.BillingQuerySkill;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -26,19 +27,21 @@ public class BillingQueryTool extends AbstractTool {
     /**
      * 按租户+账期查账单
      */
+    @RequiredPermission("billing:read")
     @Tool("按租户ID和账期查询账单流水，返回资源名称、计费类型、费用金额")
     public List<MockBillingStream> queryBill(
             @P("租户ID，如tenant-001") String tenantId,
             @P("账期，格式yyyyMM，如202607") int billingPeriod
     ) {
-        return execute("queryBill", () -> billingQuerySkill.searchByTenant(tenantId, billingPeriod)).getData();
+        return executeOrThrow("queryBill", () -> billingQuerySkill.searchByTenant(tenantId, billingPeriod));
     }
 
     /**
      * 按资源ID查该资源的所有账单（看这台机器花了多少钱）
      */
+    @RequiredPermission("billing:read")
     @Tool("按资源ID查询该资源的所有账单流水，返回费用明细")
     public List<MockBillingStream> queryBillByResource(@P("资源ID，如ecs-001") String resourceId) {
-        return execute("queryBillByResource", () -> billingQuerySkill.searchByResource(resourceId)).getData();
+        return executeOrThrow("queryBillByResource", () -> billingQuerySkill.searchByResource(resourceId));
     }
 }

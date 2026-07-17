@@ -33,6 +33,45 @@ public class SecurityContext {
         CONTEXT.remove();
     }
 
+    /**
+     * 获取当前上下文快照（用于跨线程传播）
+     * 在 HTTP 线程调用，拿到后在异步线程 set 回去
+     */
+    public static UserContext capture() {
+        return CONTEXT.get();
+    }
+
+    /**
+     * 将用户上下文传播到当前线程（通常在异步线程中调用）
+     * 配合 capture() 使用：HTTP 线程 capture → 异程线程 restore
+     */
+    public static void restore(UserContext ctx) {
+        if (ctx != null) {
+            CONTEXT.set(ctx);
+        }
+    }
+
+    /**
+     * 包装 Runnable，自动传播 SecurityContext 到目标线程。
+     * 用法：executor.execute(SecurityContext.wrap(runnable))
+     */
+    public static Runnable wrap(Runnable task) {
+        UserContext ctx = CONTEXT.get();
+        return () -> {
+            UserContext previous = CONTEXT.get();
+            try {
+                if (ctx != null) CONTEXT.set(ctx);
+                task.run();
+            } finally {
+                if (previous != null) {
+                    CONTEXT.set(previous);
+                } else {
+                    CONTEXT.remove();
+                }
+            }
+        };
+    }
+
     // ===== 以下为快捷方法，避免到处写 SecurityContext.get().xxx() =====
 
     public static String getTenantId() {

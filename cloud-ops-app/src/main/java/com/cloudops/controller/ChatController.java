@@ -2,6 +2,10 @@ package com.cloudops.controller;
 
 import com.cloudops.agent.OpsAssistant;
 import com.cloudops.guardrail.InputGuardrail;
+import com.cloudops.security.context.RequestContextStore;
+import com.cloudops.security.context.SecurityContext;
+import com.cloudops.security.context.UserContext;
+import com.cloudops.tool.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.service.TokenStream;
@@ -20,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -175,99 +180,133 @@ public class ChatController {
         ServletOutputStream out = response.getOutputStream();
         long requestStartTime = System.currentTimeMillis();
 
-        // 1. 护轨检查
-        InputGuardrail.GuardrailResult guardrailResult = inputGuardrail.check(message);
-        if (!guardrailResult.isAllowed()) {
-            log.info("[Chat-SSE] 护轨拦截 userId={}, 命中词={}", userId, guardrailResult.getHitKeyword());
-            writeSseEvent(out, "token", Map.of("content", "[护轨拦截] " + guardrailResult.getHitKeyword()));
-            writeSseEvent(out, "token", Map.of("content", guardrailResult.getMessage()));
-            writeSseEvent(out, "done", Map.of());
-            return;
-        }
-
-        // 2. TokenStream → Flux.create() 桥接 + 工具执行事件
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicBoolean hasError = new AtomicBoolean(false);
-        AtomicInteger toolCallCount = new AtomicInteger(0);
-        AtomicLong firstTokenTime = new AtomicLong();
-        AtomicReference<TokenUsage> finalTokenUsage = new AtomicReference<>();
-
-        TokenStream tokenStream = opsAssistant.chatStream(userId, message);
-
-        // ★ 注册工具执行回调 — 排障过程透明化的关键
-        tokenStream.onToolExecuted((ToolExecution toolExecution) -> {
-            toolCallCount.incrementAndGet();
-            String toolName = toolExecution.request().name();
-            String args = toolExecution.request().arguments();
-            log.info("[Chat-SSE] 工具开始执行: toolName={}, args={}", toolName, truncate(args));
-            writeSseEvent(out, "tool-start", Map.of("toolName", toolName, "args", args));
-            // 工具执行结果在同一个回调里（同步执行完成后 result 已有值）
-            String result = toolExecution.result() != null
-                    ? toolExecution.result().toString()
-                    : "(无返回内容)";
-            log.info("[Chat-SSE] 工具执行完成: toolName={}, resultLen={}", toolName,
-                    result != null ? result.length() : 0);
-            writeSseEvent(out, "tool-end", Map.of("toolName", toolName, "result", result));
-        });
-
-        Flux<String> tokenFlux = Flux.create((FluxSink<String> sink) -> {
-            tokenStream.onPartialResponse(token -> {
-                if (firstTokenTime.get() == 0) firstTokenTime.set(System.currentTimeMillis());
-                sink.next(token);
-            });
-            tokenStream.onCompleteResponse(chatResponse -> {
-                if (chatResponse.tokenUsage() != null) finalTokenUsage.set(chatResponse.tokenUsage());
-                log.info("[Chat-SSE] TokenStream 完成, userId={}", userId);
-                sink.complete();
-            });
-            tokenStream.onError(error -> {
-                log.error("[Chat-SSE] TokenStream 异常, userId={}", userId, error);
-                sink.error(error);
-            });
-        }, FluxSink.OverflowStrategy.BUFFER);
-
-        // 3. 订阅 Flux
-        tokenFlux
-                .doOnNext(token -> writeSseEvent(out, "token", Map.of("content", token)))
-                .doOnError(error -> {
-                    log.error("[Chat-SSE] 流式异常, userId={}", userId, error);
-                    writeSseEvent(out, "error", Map.of("message", error.getMessage()));
-                    Map<String, Object> doneFields = new LinkedHashMap<>();
-                    TokenUsage tu = finalTokenUsage.get();
-                    doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
-                    doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
-                    doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
-                    doneFields.put("toolCallCount", toolCallCount.get());
-                    long ft = firstTokenTime.get();
-                    doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
-                    writeSseEvent(out, "done", doneFields);
-                    hasError.set(true);
-                    latch.countDown();
-                })
-                .doOnComplete(() -> {
-                    log.info("[Chat-SSE] 流式完成, userId={}", userId);
-                    Map<String, Object> doneFields = new LinkedHashMap<>();
-                    TokenUsage tu = finalTokenUsage.get();
-                    doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
-                    doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
-                    doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
-                    doneFields.put("toolCallCount", toolCallCount.get());
-                    long ft = firstTokenTime.get();
-                    doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
-                    writeSseEvent(out, "done", doneFields);
-                    latch.countDown();
-                })
-                .subscribe();
-
-        tokenStream.start();
-
         try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+            // 1. 护轨检查
+            InputGuardrail.GuardrailResult guardrailResult = inputGuardrail.check(message);
+            if (!guardrailResult.isAllowed()) {
+                log.info("[Chat-SSE] 护轨拦截 userId={}, 命中词={}", userId, guardrailResult.getHitKeyword());
+                writeSseEvent(out, "token", Map.of("content", "[护轨拦截] " + guardrailResult.getHitKeyword()));
+                writeSseEvent(out, "token", Map.of("content", guardrailResult.getMessage()));
+                writeSseEvent(out, "done", Map.of());
+                return;
+            }
 
-        log.info("[Chat-SSE] servlet 线程释放, userId={}", userId);
+            // ★ 安全上下文跨线程传播：将当前 HTTP 线程的 UserContext 存入请求级存储
+            //   LangChain4j 的 Tool 执行可能在线程池（lTaskExecutor）上运行，
+            //   ThreadLocal 不会自动传播。DataPermissionInterceptor 和 Tool 权限校验
+            //   会从 RequestContextStore 兜底获取用户身份。
+            UserContext currentUser = SecurityContext.capture();
+            if (currentUser != null) {
+                RequestContextStore.put(userId, currentUser);
+                // ★ 设置当前请求 userId（供 PermissionCheckerConfig 回退使用）
+                RequestContextHolder.setCurrentUserId(userId);
+                log.debug("[Chat-SSE] 已传播安全上下文: userId={}, user={}", userId, currentUser.username());
+            }
+
+            // 2. TokenStream → Flux.create() 桥接 + 工具执行事件
+            CountDownLatch latch = new CountDownLatch(1);
+            AtomicBoolean hasError = new AtomicBoolean(false);
+            AtomicInteger toolCallCount = new AtomicInteger(0);
+            AtomicLong firstTokenTime = new AtomicLong();
+            AtomicReference<TokenUsage> finalTokenUsage = new AtomicReference<>();
+
+            TokenStream tokenStream = opsAssistant.chatStream(userId, message);
+
+            // ★ 注册工具执行回调 — 排障过程透明化的关键
+            tokenStream.onToolExecuted((ToolExecution toolExecution) -> {
+                toolCallCount.incrementAndGet();
+                String toolName = toolExecution.request().name();
+                String args = toolExecution.request().arguments();
+                log.info("[Chat-SSE] 工具开始执行: toolName={}, args={}", toolName, truncate(args));
+                writeSseEvent(out, "tool-start", Map.of("toolName", toolName, "args", args));
+                // 工具执行结果在同一个回调里（同步执行完成后 result 已有值）
+                String result = toolExecution.result() != null
+                        ? toolExecution.result().toString()
+                        : "(无返回内容)";
+                log.info("[Chat-SSE] 工具执行完成: toolName={}, resultLen={}", toolName,
+                        result != null ? result.length() : 0);
+                writeSseEvent(out, "tool-end", Map.of("toolName", toolName, "result", result));
+            });
+
+            Flux<String> tokenFlux = Flux.create((FluxSink<String> sink) -> {
+                tokenStream.onPartialResponse(token -> {
+                    if (firstTokenTime.get() == 0) firstTokenTime.set(System.currentTimeMillis());
+                    sink.next(token);
+                });
+                tokenStream.onCompleteResponse(chatResponse -> {
+                    if (chatResponse.tokenUsage() != null) finalTokenUsage.set(chatResponse.tokenUsage());
+                    log.info("[Chat-SSE] TokenStream 完成, userId={}", userId);
+                    sink.complete();
+                });
+                tokenStream.onError(error -> {
+                    log.error("[Chat-SSE] TokenStream 异常, userId={}", userId, error);
+                    sink.error(error);
+                });
+            }, FluxSink.OverflowStrategy.BUFFER);
+
+            // 3. 订阅 Flux
+            tokenFlux
+                    .doOnNext(token -> writeSseEvent(out, "token", Map.of("content", token)))
+                    .doOnError(error -> {
+                        log.error("[Chat-SSE] 流式异常, userId={}", userId, error);
+                        writeSseEvent(out, "error", Map.of("message", error.getMessage()));
+                        Map<String, Object> doneFields = new LinkedHashMap<>();
+                        TokenUsage tu = finalTokenUsage.get();
+                        doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
+                        doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
+                        doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
+                        doneFields.put("toolCallCount", toolCallCount.get());
+                        long ft = firstTokenTime.get();
+                        doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                        writeSseEvent(out, "done", doneFields);
+                        hasError.set(true);
+                        latch.countDown();
+                    })
+                    .doOnComplete(() -> {
+                        log.info("[Chat-SSE] 流式完成, userId={}", userId);
+                        Map<String, Object> doneFields = new LinkedHashMap<>();
+                        TokenUsage tu = finalTokenUsage.get();
+                        doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
+                        doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
+                        doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
+                        doneFields.put("toolCallCount", toolCallCount.get());
+                        long ft = firstTokenTime.get();
+                        doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                        writeSseEvent(out, "done", doneFields);
+                        latch.countDown();
+                    })
+                    .subscribe();
+
+            tokenStream.start();
+
+            // ★ 带超时的 await（120秒）
+            //   正常情况：onComplete/doOnComplete → latch.countDown() → 立即返回
+            //   异常情况：LangChain4j 内部吞异常导致 onComplete/onError 都不触发
+            //            → 超时后主动写 error+done 关闭流，避免 servlet 线程永久阻塞 + 前端卡死
+            try {
+                if (!latch.await(120, TimeUnit.SECONDS)) {
+                    // 超时 — 说明 TokenStream 的 onComplete/onError 都没触发（内部异常被吞）
+                    log.error("[Chat-SSE] latch.await 超时(120s)，TokenStream 可能内部异常，userId={}", userId);
+                    writeSseEvent(out, "error", Map.of("message", "响应超时：Agent 处理时间过长或遇到内部异常"));
+                    writeSseEvent(out, "done", Map.of());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            log.info("[Chat-SSE] servlet 线程释放, userId={}", userId);
+
+        } catch (Exception e) {
+            // ★ 捕获所有异常，写 SSE error 事件，不让异常传播到 Spring Boot /error 转发
+            //   （否则 /error 路径无 SecurityContext → 触发 401 误判）
+            log.error("[Chat-SSE] 异常, userId={}, error={}", userId, e.getMessage(), e);
+            writeSseEvent(out, "error", Map.of("message", "Agent 调用异常: " + e.getMessage()));
+            writeSseEvent(out, "done", Map.of());
+        } finally {
+            // ★ 清理请求级安全上下文（无论成功/异常都执行）
+            RequestContextStore.remove(userId);
+            RequestContextHolder.clear();
+        }
     }
 
     /**

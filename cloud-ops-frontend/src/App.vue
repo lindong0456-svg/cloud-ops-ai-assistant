@@ -18,7 +18,8 @@
       </button>
 
       <!-- 实时告警区（提至快捷操作上方，日常使用最关注） -->
-      <div class="sidebar-section sidebar-section--alarms">
+      <!-- 权限门控：仅拥有 alarm:read 的角色（admin/ops_eng）可见；其余角色显示无权限占位 -->
+      <div v-if="canViewAlarms" class="sidebar-section sidebar-section--alarms">
         <div class="section-header">
           <h3>实时告警 <span v-if="alarms.length > 0" class="alarm-count-badge">{{ alarms.length }}</span></h3>
           <button :disabled="streaming" class="refresh-btn" title="刷新告警" @click="fetchAlarms">↻</button>
@@ -56,6 +57,12 @@
         <!-- 无告警 -->
         <div v-else class="alarm-empty">
           <span>✅ 暂无未处理告警</span>
+        </div>
+      </div>
+      <!-- 无 alarm:read 权限：展示占位，不调用接口 -->
+      <div v-else class="sidebar-section sidebar-section--alarms">
+        <div class="alarm-empty alarm-empty--locked">
+          <span>🔒 当前角色无权限查看告警</span>
         </div>
       </div>
 
@@ -104,6 +111,7 @@
 
 
       <div class="sidebar-footer">
+        <!-- 后端连接状态 -->
         <div class="status-row">
           <span :class="{ online: backendOnline }" class="status-dot"></span>
           <span>{{ backendOnline ? '后端已连接' : '正在连接后端...' }}</span>
@@ -119,7 +127,13 @@
           <span class="model-tag">DeepSeek · ReAct</span>
         </div>
         <div class="right">
-          <span>{{ messages.length }} 条消息</span>
+          <!-- 主题切换按钮 -->
+          <button class="theme-btn" :title="themeMode === 'dark' ? '切换到日间模式' : '切换到夜间模式'" @click="toggleTheme">
+            {{ themeMode === 'dark' ? '☀️' : '🌙' }}
+          </button>
+          <!-- 用户面板 -->
+          <UserPanel v-if="currentUser" :user="currentUser" active-permission="agent:chat" @logout="handleLogout" />
+          <span v-else class="msg-count">{{ messages.length }} 条消息</span>
         </div>
       </header>
 
@@ -153,7 +167,7 @@
         <div v-for="(msg, index) in messages" :key="index" :class="msg.role" class="message">
           <div class="avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
           <div class="message-content">
-            <div class="message-role">{{ msg.role === 'user' ? '我' : '运维助手' }}</div>
+            <div class="message-role">{{ msg.role === 'user' ? '我' : (msg.streaming ? '思考中' : '运维助手') }}</div>
             <div v-if="msg.role === 'assistant'" class="react-container">
               <!--
                 ★ 流式期间：混合渲染模式
@@ -289,13 +303,19 @@
 
     <!-- Toast -->
     <div v-if="toast" class="toast">{{ toast }}</div>
+
+    <!-- 登录弹窗 -->
+    <LoginModal v-if="showLogin" @success="handleLoginSuccess" />
   </div>
 </template>
 
 <script lang="ts" setup>
-import {nextTick, onMounted, reactive, ref} from 'vue'
+import {computed, nextTick, onMounted, reactive, ref} from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import LoginModal from './components/LoginModal.vue'
+import UserPanel from './components/UserPanel.vue'
+import {apiFetch, getSseUrl, getUser, isLoggedIn, logout, type UserInfo} from './api/client'
 
 const inputText = ref('')
 const messages = ref<Array<{ role: string; content: string; streaming?: boolean }>>([])
@@ -310,6 +330,61 @@ const currentTool = ref('')
 const needsRetry = ref(false)
 const retryMessage = ref('')
 const retryUserId = ref('')
+
+// ★ 登录状态管理
+const showLogin = ref(!isLoggedIn())
+const currentUser = ref<UserInfo | null>(getUser())
+
+// ★ 主题管理：dark / light，根据时间自动切换（6:00-18:00=light）
+type ThemeMode = 'dark' | 'light'
+const THEME_KEY = 'cloud-ops-theme'
+const themeMode = ref<ThemeMode>((localStorage.getItem(THEME_KEY) as ThemeMode) || detectThemeByTime())
+
+function detectThemeByTime(): ThemeMode {
+  const h = new Date().getHours()
+  return (h >= 6 && h < 18) ? 'light' : 'dark'
+}
+
+function applyTheme(mode: ThemeMode) {
+  document.documentElement.classList.add('theme-transitioning')
+  document.documentElement.setAttribute('data-theme', mode)
+  // 清除过渡 class（让后续交互不再有过渡延迟）
+  setTimeout(() => {
+    document.documentElement.classList.remove('theme-transitioning')
+  }, 400)
+}
+
+function toggleTheme() {
+  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
+  localStorage.setItem(THEME_KEY, themeMode.value)
+  applyTheme(themeMode.value)
+}
+
+// 登录成功回调
+function handleLoginSuccess(user: UserInfo) {
+  currentUser.value = user
+  showLogin.value = false
+  backendOnline.value = true
+  // 仅当拥有 alarm:read 权限时才拉取告警列表
+  if (canViewAlarms.value) fetchAlarms()
+  showToast('登录成功，欢迎 ' + user.username)
+}
+
+// 退出登录
+function handleLogout() {
+  logout()
+  currentUser.value = null
+  showLogin.value = true
+  messages.value = []
+  showToast('已退出登录')
+}
+
+// 监听 auth:logout 事件（apiFetch 401 时触发）
+window.addEventListener('auth:logout', () => {
+  currentUser.value = null
+  showLogin.value = true
+  messages.value = []
+})
 
 // 工具能力折叠面板状态（默认收起）
 const isToolsExpanded = ref(false)
@@ -672,7 +747,8 @@ async function sendMessage(text: string, isRetry = false) {
   if (!isRetry) retryMessage.value = message
   if (!isRetry) retryUserId.value = userId
 
-  const url = 'http://localhost:8080/api/agent/chat/stream?userId=' + userId + '&message=' + encodeURIComponent(message)
+  const baseUrl = '/api/agent/chat/stream?userId=' + userId + '&message=' + encodeURIComponent(message)
+  const url = getSseUrl(baseUrl)  // ★ 追加 &token=xxx（SSE 不能设 header）
   eventSource = new EventSource(url)
 
   // ★ SSE 结构化事件处理（token / tool-start / tool-end / done / error）
@@ -812,7 +888,7 @@ async function openSopDoc(docName: string) {
   sopLoading.value = true
 
   try {
-    const res = await fetch('/api/sop/' + encodeURIComponent(docName))
+    const res = await apiFetch('/api/sop/' + encodeURIComponent(docName))
     if (!res.ok) throw new Error('HTTP ' + res.status)
     const text = await res.text()
     if (text.startsWith('[错误]')) {
@@ -837,6 +913,26 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 // ========== 告警列表 ==========
+
+/**
+ * 是否有权查看告警列表 — 基于登录用户的 alarm:read 权限动态判断
+ *
+ * 设计：
+ *   - 后端 AlarmController 已用 @PreAuthorize("hasAuthority('alarm:read')") 拦截无权限请求（403）
+ *   - 前端在此做"前置判定"：无权限直接不调用 API，避免 403 被吞成静默空白
+ *   - 后端 DataPermissionInterceptor 已对 mock_alarm 表按 tenant_id/dept_id 隔离
+ *     → 有权限的用户也只会看到自己租户/部门的告警（admin 等 SUPER_ADMIN 看全部）
+ *
+ * 这样不同角色登录后左侧告警区会"动态展示"：
+ *   - admin / ops_eng（有 alarm:read）→ 展示告警列表（按租户隔离）
+ *   - finance / ops_viewer（无 alarm:read）→ 展示"无权限"占位，不调用 API
+ */
+const canViewAlarms = computed(() => {
+  const user = currentUser.value
+  if (!user || !user.permissions) return false
+  return user.permissions.some(p => p.code === 'alarm:read')
+})
+
 interface Alarm {
   alertId: string
   resourceId: string
@@ -850,9 +946,11 @@ const alarms = ref<Alarm[]>([])
 const alarmsLoading = ref(false)
 
 async function fetchAlarms() {
+  // 防御：无 alarm:read 权限不调用接口（避免 403 被吞成静默空白）
+  if (!canViewAlarms.value) return
   alarmsLoading.value = true
   try {
-    const res = await fetch('/api/alarms?limit=10')
+    const res = await apiFetch('/api/alarms?limit=10')
     if (!res.ok) throw new Error('HTTP ' + res.status)
     const data = await res.json()
     alarms.value = data.alarms || []
@@ -935,11 +1033,14 @@ function downloadReport(content: string, index: number) {
 }
 
 onMounted(async () => {
+  // ★ 初始化主题
+  applyTheme(themeMode.value)
+
   // 全局键盘事件
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keydown', onGlobalShortcut)
-  // 拉取告警列表
-  fetchAlarms()
+  // 已登录且有 alarm:read 权限才拉取告警列表（未登录时 LoginModal 成功后会按权限自动拉取）
+  if (isLoggedIn() && canViewAlarms.value) fetchAlarms()
   try {
     const res = await fetch('/health')
     if (res.ok) backendOnline.value = true
@@ -975,6 +1076,30 @@ function onGlobalShortcut(e: KeyboardEvent) {
 /* 组件级样式：textarea 自适应 */
 .input-wrapper textarea {
   width: 100%;
+}
+
+/* ========== 主题切换按钮 ========== */
+.theme-btn {
+  width: 34px; height: 34px;
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.theme-btn:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+  border-color: var(--glass-border-strong, rgba(255,255,255,0.14));
+  transform: scale(1.05);
+}
+
+/* ========== 消息计数（未登录时显示） ========== */
+.msg-count {
+  font-size: 12px;
+  color: var(--text-tertiary, #6b7088);
 }
 
 /* ========== 响应统计面板 ========== */

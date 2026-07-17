@@ -2,6 +2,7 @@ package com.cloudops.security.service;
 
 import com.cloudops.security.dto.LoginRequest;
 import com.cloudops.security.dto.LoginResponse;
+import com.cloudops.security.dto.PermissionInfo;
 import com.cloudops.security.entity.SysUser;
 import com.cloudops.security.jwt.JwtPayload;
 import com.cloudops.security.jwt.JwtUtil;
@@ -20,9 +21,9 @@ import java.util.List;
  * 登录流程:
  *   1. 根据 username 查 sys_user 表
  *   2. BCrypt 校验密码
- *   3. 查用户的角色列表和权限列表
+ *   3. 查用户的角色列表和权限列表（含中文）
  *   4. 签发 JWT Token
- *   5. 返回 Token + 用户信息
+ *   5. 返回 Token + 用户信息 + 权限（含中文）
  */
 @Slf4j
 @Service
@@ -37,7 +38,7 @@ public class AuthService {
      * 用户登录
      *
      * @param request 用户名+密码
-     * @return LoginResponse 含Token和用户信息，登录失败抛异常
+     * @return LoginResponse 含Token和用户信息，permissions 为 List<PermissionInfo>(code, name)
      */
     public LoginResponse login(LoginRequest request) {
         // 1. 查用户
@@ -53,31 +54,34 @@ public class AuthService {
             throw new RuntimeException("用户名或密码错误");
         }
 
-        // 3. 查角色和权限
+        // 3. 查角色和权限（含中文名）
         List<String> roles = userMapper.selectRoleCodesByUserId(user.getUserId());
-        List<String> permissions = userMapper.selectPermissionCodesByUserId(user.getUserId());
+        List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getUserId());
+        List<PermissionInfo> permissions = userMapper.selectPermissionsByUserId(user.getUserId());
 
         // 防御性处理：空值转空列表
         roles = roles != null ? roles : Collections.emptyList();
+        permissionCodes = permissionCodes != null ? permissionCodes : Collections.emptyList();
         permissions = permissions != null ? permissions : Collections.emptyList();
 
         log.info("[登录] 成功, userId={}, username={}, roles={}, permissions={}",
-                user.getUserId(), user.getUsername(), roles, permissions);
+                user.getUserId(), user.getUsername(), roles,
+                permissions.stream().map(PermissionInfo::code).toList());
 
-        // 4. 构造 JWT 载荷
+        // 4. 构造 JWT 载荷（JWT 里只放 code，不放 name，保持 Token 精简）
         JwtPayload payload = new JwtPayload(
                 user.getUserId(),
                 user.getUsername(),
                 user.getTenantId(),
                 user.getDeptId(),
                 roles,
-                permissions
+                permissionCodes
         );
 
         // 5. 签发 Token
         String token = jwtUtil.generateToken(payload);
 
-        // 6. 返回登录响应
+        // 6. 返回登录响应（permissions 含中文）
         return new LoginResponse(
                 token,
                 user.getUserId(),

@@ -97,13 +97,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * 从 Authorization Header 提取 Token
-     * 格式: "Bearer eyJhbGciOiJIUzI1NiJ9..."
+     *
+     * ★ SSE 旁路：EventSource 浏览器 API 不支持设置自定义 Header，
+     *   因此对 SSE 端点额外支持 query 参数 ?token=xxx 兜底。
+     *   优先级：Header > Query，现有 fetch 请求走 Header 不受影响。
      */
     private String extractToken(HttpServletRequest request) {
+        // 1. 优先从 Authorization Header 提取（普通 fetch/POST 请求走这里）
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);  // 去掉 "Bearer " 前缀
         }
+
+        // 2. 兜底：从 query 参数提取（SSE/EventSource 请求走这里，浏览器 API 不支持设 header）
+        String queryToken = request.getParameter("token");
+        if (StringUtils.hasText(queryToken)) {
+            log.debug("[JWT] Header 无 Token，从 query 参数提取（SSE 旁路）");
+            return queryToken;
+        }
+
         log.debug("[JWT] 未找到 Token");
         return null;
     }

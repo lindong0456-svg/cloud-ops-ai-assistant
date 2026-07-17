@@ -1,6 +1,7 @@
 package com.cloudops.tool;
 
 import com.cloudops.entity.MockAlarm;
+import com.cloudops.tool.annotation.RequiredPermission;
 import com.cloudops.skill.AlarmSearchSkill;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -27,17 +28,19 @@ public class AlarmQueryTool extends AbstractTool {
      * 查询最近未处理告警
      * 当用户说"有什么告警""ecs-001怎么了"时，AI 会调这个方法
      */
+    @RequiredPermission("alarm:read")
     @Tool("查询最近N条未处理告警，返回告警ID、资源ID、资源类型、严重等级、告警内容、触发时间")
     public List<MockAlarm> queryAlarms(@P("查询数量，默认5") int limit) {
-        return execute("queryAlarms", () -> alarmSearchSkill.searchUnresolved(limit)).getData();
+        return executeOrThrow("queryAlarms", () -> alarmSearchSkill.searchUnresolved(limit));
     }
 
     /**
      * 按资源ID查询告警
      * 当 Agent 排查某台机器时，先调这个看有没有告警
      */
+    @RequiredPermission("alarm:read")
     @Tool("按资源ID查询该资源的所有告警，返回告警列表")
     public List<MockAlarm> queryAlarmsByResource(@P("资源ID，如ecs-001") String resourceId) {
-        return execute("queryAlarmsByResource", () -> alarmSearchSkill.searchByResource(resourceId)).getData();
+        return executeOrThrow("queryAlarmsByResource", () -> alarmSearchSkill.searchByResource(resourceId));
     }
 }
