@@ -59,10 +59,6 @@
             <span class="qa-role">运维工程师</span>
             <span class="qa-cred">ops_eng / admin123</span>
           </button>
-          <button class="quick-account-btn" type="button" @click="fillTestAccount('ops_viewer', 'admin123')">
-            <span class="qa-role">运维只读用户</span>
-            <span class="qa-cred">ops_viewer / admin123</span>
-          </button>
           <button class="quick-account-btn" type="button" @click="fillTestAccount('finance', 'admin123')">
             <span class="qa-role">财务人员</span>
             <span class="qa-cred">finance / admin123</span>
@@ -74,8 +70,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { login, type UserInfo } from '../api/client'
+import {ref} from 'vue'
+import {login, type UserInfo} from '../api/client'
 
 const emit = defineEmits<{
   success: [user: UserInfo]

@@ -1,5 +1,6 @@
 package com.cloudops.tool;
 
+import com.cloudops.observability.RequestMetrics;
 import com.cloudops.tool.annotation.RequiredPermission;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -49,6 +50,47 @@ public abstract class AbstractTool {
     }
 
     /**
+     * 跨线程解析当前请求的 userId（与 DataPermissionInterceptor / KnowledgeRetrievalService 一致）
+     *
+     * Tool 可能在线程池上执行（LangChain4j 流式），HTTP 线程的 ThreadLocal 不可用。
+     * 通过 userIdResolver 回退到 RequestContextStore（ConcurrentHashMap）获取活跃上下文。
+     * 由 MetricsConfig 启动时注入实现。
+     */
+    private static Supplier<String> userIdResolver;
+
+    /**
+     * 通过 StackWalker 获取调用 execute() 的方法上的 @RequiredPermission 注解
+     *
+     * 调用链：Tool方法() → AbstractTool.execute() → findRequiredPermission()
+     * 所以调用 execute() 的那个方法就是带 @Tool + @RequiredPermission 注解的业务方法
+     */
+    private RequiredPermission findRequiredPermission() {
+        try {
+            return STACK_WALKER.walk(frames -> frames
+                    .skip(3)                          // 跳过 findRequiredPermission / execute / executeOrThrow 自身
+                    .findFirst()                       // 第一个就是 Tool 方法
+                    .map(f -> {
+                        try {
+                            return f.getDeclaringClass().getDeclaredMethod(
+                                    f.getMethodName(), f.getMethodType().parameterArray());
+                        } catch (NoSuchMethodException e) {
+                            return null;
+                        }
+                    })
+                    .map(m -> m != null ? m.getAnnotation(RequiredPermission.class) : null)
+                    .orElse(null));
+        } catch (Exception e) {
+            log.debug("[Tool] 获取 @RequiredPermission 注解失败（可能未标注，忽略即可）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 静态注入点（MetricsConfig 启动时调用） */
+    public static void setUserIdResolver(Supplier<String> resolver) {
+        AbstractTool.userIdResolver = resolver;
+    }
+
+    /**
      * 模板方法 — final 防止子类覆盖执行流程
      *
      * 执行顺序：权限校验 → 记录开始 → 执行业务(Supplier) → 记录完成 → 异常兜底
@@ -84,6 +126,8 @@ public abstract class AbstractTool {
                         "tool", toolName,
                         "status", "success").increment();
             }
+            // ★ 本次请求可观测：累加工具调用成功
+            RequestMetrics.recordTool(resolveCurrentUserId(), toolName, true);
             return ToolResult.success(result, costMs);
         } catch (Exception e) {
             long costMs = System.currentTimeMillis() - startTime;
@@ -97,35 +141,21 @@ public abstract class AbstractTool {
                         "tool", toolName,
                         "status", "error").increment();
             }
+            // ★ 本次请求可观测：累加工具调用失败
+            RequestMetrics.recordTool(resolveCurrentUserId(), toolName, false);
             return ToolResult.fail(e.getMessage(), costMs);
         }
     }
 
-    /**
-     * 通过 StackWalker 获取调用 execute() 的方法上的 @RequiredPermission 注解
-     *
-     * 调用链：Tool方法() → AbstractTool.execute() → findRequiredPermission()
-     * 所以调用 execute() 的那个方法就是带 @Tool + @RequiredPermission 注解的业务方法
-     */
-    private RequiredPermission findRequiredPermission() {
-        try {
-            return STACK_WALKER.walk(frames -> frames
-                    .skip(3)                          // 跳过 findRequiredPermission / execute / executeOrThrow 自身
-                    .findFirst()                       // 第一个就是 Tool 方法
-                    .map(f -> {
-                        try {
-                            return f.getDeclaringClass().getDeclaredMethod(
-                                    f.getMethodName(), f.getMethodType().parameterArray());
-                        } catch (NoSuchMethodException e) {
-                            return null;
-                        }
-                    })
-                    .map(m -> m != null ? m.getAnnotation(RequiredPermission.class) : null)
-                    .orElse(null));
-        } catch (Exception e) {
-            log.debug("[Tool] 获取 @RequiredPermission 注解失败（可能未标注，忽略即可）: {}", e.getMessage());
-            return null;
+    private String resolveCurrentUserId() {
+        // 1. HTTP 线程：ThreadLocal 直取
+        String uid = RequestContextHolder.getCurrentUserId();
+        if (uid != null) return uid;
+        // 2. 异步线程兜底：通过注入的 resolver 访问 RequestContextStore
+        if (userIdResolver != null) {
+            return userIdResolver.get();
         }
+        return null;
     }
 
     /**

@@ -1068,14 +1068,25 @@ body {
  * T28 实时告警列表 + 一键排障
  * ============================================================ */
 
-/* 告警区块：占满侧栏剩余空间，优先级最高 */
+/* 告警区块：删除快捷操作后，告警区撑满侧栏剩余空间（header → 告警 → 历史 → footer） */
 .sidebar-section--alarms {
-  flex: 0 1 auto;  /* 不强制撑满，由内容决定高度 */
-  min-height: 120px;  /* 至少显示 2-3 条告警 */
-  max-height: 280px;  /* 最多 280px，超出的内部滚动 */
+  min-height: 0;    /* 允许 flex 子项收缩 */
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* 折叠态：仅保留标题高度，释放空间给历史会话上移 */
+.sidebar-section--alarms.is-expanded {
+  flex: 1 1 auto;   /* ★ 撑满 header 和 history 之间的全部空间 */
+}
+.sidebar-section--alarms:not(.is-expanded) {
+  flex: 0 0 auto;
+}
+/* 折叠图标旁的刷新按钮容器 */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .section-header {
@@ -1133,7 +1144,7 @@ body {
   cursor: not-allowed;
 }
 
-/* 告警列表：可滚动 */
+/* 告警列表：可滚动，卡片间距拉大减少拥挤 */
 .alarm-list {
   flex: 1;
   overflow-y: auto;
@@ -1141,7 +1152,8 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;  /* 从 6px → 8px，呼吸感更好 */
+  padding: 2px 0; /* 上下留一点边距 */
 }
 
 /* 单条告警卡片 — 用 border-left 做色条，最简单可靠 */

@@ -19,6 +19,8 @@ services:
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_DEFAULT_LOCALE=zh_CN
     volumes:
       - ./grafana-provisioning:/etc/grafana/provisioning
       - ./grafana-dashboards:/etc/grafana/provisioning/dashboards

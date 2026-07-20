@@ -19,70 +19,55 @@
 
       <!-- 实时告警区（提至快捷操作上方，日常使用最关注） -->
       <!-- 权限门控：仅拥有 alarm:read 的角色（admin/ops_eng）可见；其余角色显示无权限占位 -->
-      <div v-if="canViewAlarms" class="sidebar-section sidebar-section--alarms">
-        <div class="section-header">
+      <div v-if="canViewAlarms" :class="{ 'is-expanded': isAlarmsExpanded }" class="sidebar-section sidebar-section--alarms">
+        <div class="section-header section-header--collapsible" @click="toggleAlarms">
           <h3>实时告警 <span v-if="alarms.length > 0" class="alarm-count-badge">{{ alarms.length }}</span></h3>
-          <button :disabled="streaming" class="refresh-btn" title="刷新告警" @click="fetchAlarms">↻</button>
+          <span class="header-actions">
+            <button :disabled="streaming" class="refresh-btn" title="刷新告警" @click.stop="fetchAlarms">↻</button>
+            <span :class="{ expanded: isAlarmsExpanded }" class="collapse-icon">▶</span>
+          </span>
         </div>
-        <!-- 告警加载中 -->
-        <div v-if="alarmsLoading" class="alarm-loading">
-          <div class="mini-spinner"></div>
-          <span>加载中...</span>
-        </div>
-        <!-- 告警列表 -->
-        <div v-else-if="alarms.length > 0" class="alarm-list">
-          <div
-            v-for="alarm in alarms"
-            :key="alarm.alertId"
-            :class="'severity-' + (alarm.severity || 'info').toLowerCase()"
-            class="alarm-card"
-          >
-            <div class="alarm-severity-bar"></div>
-            <div class="alarm-body">
-              <div class="alarm-resource">{{ alarm.resourceId }}</div>
-              <div class="alarm-msg">{{ alarm.msg }}</div>
-              <div class="alarm-meta">
-                <span class="alarm-type">{{ alarm.resourceType }}</span>
-                <button
-                  :disabled="streaming"
-                  class="alarm-action-btn"
-                  @click="startTroubleshoot(alarm)"
-                >
-                  🔧 排障
-                </button>
+        <div v-show="isAlarmsExpanded">
+          <!-- 告警加载中 -->
+          <div v-if="alarmsLoading" class="alarm-loading">
+            <div class="mini-spinner"></div>
+            <span>加载中...</span>
+          </div>
+          <!-- 告警列表 -->
+          <div v-else-if="alarms.length > 0" class="alarm-list">
+            <div
+              v-for="alarm in alarms"
+              :key="alarm.alertId"
+              :class="'severity-' + (alarm.severity || 'info').toLowerCase()"
+              class="alarm-card"
+            >
+              <div class="alarm-severity-bar"></div>
+              <div class="alarm-body">
+                <div class="alarm-resource">{{ alarm.resourceId }}</div>
+                <div class="alarm-msg">{{ alarm.msg }}</div>
+                <div class="alarm-meta">
+                  <span class="alarm-type">{{ alarm.resourceType }}</span>
+                  <button
+                    :disabled="streaming"
+                    class="alarm-action-btn"
+                    @click="startTroubleshoot(alarm)"
+                  >
+                    🔧 排障
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        <!-- 无告警 -->
-        <div v-else class="alarm-empty">
-          <span>✅ 暂无未处理告警</span>
+          <!-- 无告警 -->
+          <div v-else class="alarm-empty">
+            <span>✅ 暂无未处理告警</span>
+          </div>
         </div>
       </div>
       <!-- 无 alarm:read 权限：展示占位，不调用接口 -->
       <div v-else class="sidebar-section sidebar-section--alarms">
         <div class="alarm-empty alarm-empty--locked">
           <span>🔒 当前角色无权限查看告警</span>
-        </div>
-      </div>
-
-      <!-- 快捷操作 -->
-      <div class="sidebar-section">
-        <div class="section-header section-header--collapsible" @click="toggleQuickActions">
-          <h3>快捷操作</h3>
-          <span :class="{ expanded: isQuickActionsExpanded }" class="collapse-icon">▶</span>
-        </div>
-        <div v-show="isQuickActionsExpanded" class="tools-content">
-          <button
-            v-for="item in quickActions"
-            :key="item.text"
-            :class="{ active: lastQuickAction === item.text }"
-            :disabled="streaming"
-            class="quick-btn"
-            @click="sendMessage(item.text)"
-          >
-            <span class="icon">{{ item.icon }}</span><span>{{ item.label }}</span>
-          </button>
         </div>
       </div>
 
@@ -108,15 +93,6 @@
           </div>
         </div>
       </div>
-
-
-      <div class="sidebar-footer">
-        <!-- 后端连接状态 -->
-        <div class="status-row">
-          <span :class="{ online: backendOnline }" class="status-dot"></span>
-          <span>{{ backendOnline ? '后端已连接' : '正在连接后端...' }}</span>
-        </div>
-      </div>
     </aside>
 
     <!-- ==================== 右侧主区 ==================== -->
@@ -124,7 +100,20 @@
       <header class="main-header">
         <div class="left">
           <span class="left-title">智能排障对话</span>
-          <span class="model-tag">DeepSeek · ReAct</span>
+          <!-- 后端连接状态（紧凑行内） -->
+          <span :class="{ online: backendOnline }" :title="backendOnline ? '后端已连接' : '正在连接后端...'" class="conn-status"></span>
+          <span class="model-tag">{{ activeModelLabel }} · ReAct</span>
+          <!-- 管理员：模型切换下拉（仅多模型时显示） -->
+          <select
+            v-if="isAdmin && modelOptions.length > 1"
+            :disabled="streaming || switchingModel"
+            :value="activeModelKey"
+            class="model-select"
+            title="切换对话模型"
+            @change="switchModel(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="m in modelOptions" :key="m.key" :value="m.key">{{ m.label }}</option>
+          </select>
         </div>
         <div class="right">
           <!-- 主题切换按钮 -->
@@ -144,21 +133,9 @@
           <h2>云运维智能助手</h2>
           <p>基于 ReAct 的云资源排障 Agent，支持告警查询、资源拓扑、负载分析、SOP 检索</p>
           <div class="examples">
-            <button class="example-card" @click="sendMessage('有哪些告警？')">
-              <div class="title"><span class="icon">🚨</span>查看告警</div>
-              <div class="desc">查询当前未处理告警列表</div>
-            </button>
-            <button class="example-card" @click="sendMessage('ecs-001 的 CPU 高怎么办？')">
-              <div class="title"><span class="icon">🔧</span>CPU 排障</div>
-              <div class="desc">从告警到 SOP 的完整排障</div>
-            </button>
-            <button class="example-card" @click="sendMessage('ebm-001 是不是内存泄漏？')">
-              <div class="title"><span class="icon">🧠</span>内存排查</div>
-              <div class="desc">分析内存指标定位泄漏</div>
-            </button>
-            <button class="example-card" @click="sendMessage('gpu-002 成本优化建议')">
-              <div class="title"><span class="icon">💰</span>成本优化</div>
-              <div class="desc">基于账单给出优化建议</div>
+            <button v-for="card in welcomeCards" :key="card.text" class="example-card" @click="sendMessage(card.text)">
+              <div class="title"><span class="icon">{{ card.icon }}</span>{{ card.title }}</div>
+              <div class="desc">{{ card.desc }}</div>
             </button>
           </div>
         </div>
@@ -208,20 +185,59 @@
 
               <!-- ★ 完成/历史消息：完整 ReAct 卡片 + Markdown 渲染 -->
               <template v-else>
-                <template v-for="(section, sIdx) in parseReActSections(msg.content)" :key="'done-' + sIdx">
-                  <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
-                    <div class="react-card-label">🧠 思考</div>
-                    <div class="react-card-content">{{ section.content }}</div>
+                <!-- 有结论 + 中间步骤 → 支持折叠 -->
+                <template v-if="hasCollapsibleSections(msg.content)">
+                  <!-- 折叠触发条：点击展开/收起 -->
+                  <div
+                    :class="{ expanded: isExpanded(index) }"
+                    class="react-collapse-trigger"
+                    @click="toggleExpand(index)"
+                  >
+                    <span class="collapse-gem">✦</span>
+                    <span class="collapse-label">思考完成</span>
+                    <span class="collapse-count">{{ getIntermediateCount(msg.content) }} 步推理过程</span>
+                    <span class="collapse-arrow">{{ isExpanded(index) ? '▾' : '▸' }}</span>
                   </div>
-                  <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
-                    <div class="react-card-label">🔧 工具调用</div>
-                    <code class="react-card-content react-code">{{ section.content }}</code>
+                  <!-- 可折叠的中间步骤（默认收起） -->
+                  <div v-show="isExpanded(index)" class="react-collapse-body">
+                    <template v-for="(section, sIdx) in getIntermediateSections(msg.content)" :key="'int-' + index + '-' + sIdx">
+                      <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
+                        <div class="react-card-label">🧠 思考</div>
+                        <div class="react-card-content">{{ section.content }}</div>
+                      </div>
+                      <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
+                        <div class="react-card-label">🔧 工具调用</div>
+                        <code class="react-card-content react-code">{{ section.content }}</code>
+                      </div>
+                      <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
+                        <div class="react-card-label">📊 观察结果</div>
+                        <div class="react-card-content">{{ section.content }}</div>
+                      </div>
+                    </template>
                   </div>
-                  <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
-                    <div class="react-card-label">📊 观察结果</div>
-                    <div class="react-card-content">{{ section.content }}</div>
-                  </div>
-                  <div v-else class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+                  <!-- 结论始终展示，不参与折叠 -->
+                  <template v-for="(section, sIdx) in getConclusionSections(msg.content)" :key="'concl-' + index + '-' + sIdx">
+                    <div class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+                  </template>
+                </template>
+
+                <!-- 无结论或无中间步骤 → 原始渲染，不折叠 -->
+                <template v-else>
+                  <template v-for="(section, sIdx) in parseReActSections(msg.content)" :key="'done-' + sIdx">
+                    <div v-if="section.type === 'thinking'" class="react-card react-card--thinking">
+                      <div class="react-card-label">🧠 思考</div>
+                      <div class="react-card-content">{{ section.content }}</div>
+                    </div>
+                    <div v-else-if="section.type === 'tool'" class="react-card react-card--tool">
+                      <div class="react-card-label">🔧 工具调用</div>
+                      <code class="react-card-content react-code">{{ section.content }}</code>
+                    </div>
+                    <div v-else-if="section.type === 'observation'" class="react-card react-card--observation">
+                      <div class="react-card-label">📊 观察结果</div>
+                      <div class="react-card-content">{{ section.content }}</div>
+                    </div>
+                    <div v-else class="markdown-body" @click="handleDocClick" v-html="renderMarkdown(section.content)"></div>
+                  </template>
                 </template>
               </template>
             </div>
@@ -248,8 +264,16 @@
               <span class="stats-item">🪙 {{ ((msg as any).stats.totalTokens).toLocaleString() }} token</span>
               <span class="stats-divider">·</span>
               <span class="stats-item">🔧 {{ (msg as any).stats.toolCallCount }} 次工具调用</span>
+              <template v-if="((msg as any).stats.toolSuccess || 0) + ((msg as any).stats.toolFail || 0) > 0">
+                <span class="stats-divider">·</span>
+                <span class="stats-item">✅ {{ (msg as any).stats.toolSuccess }}✓ / {{ (msg as any).stats.toolFail }}✗</span>
+              </template>
+              <template v-if="((msg as any).stats.ragRecallCount || 0) > 0">
+                <span class="stats-divider">·</span>
+                <span class="stats-item">🔍 RAG 召回 {{ (msg as any).stats.ragRecallCount }} 条 ({{ (msg as any).stats.ragLatencyMs }}ms)</span>
+              </template>
               <span class="stats-divider">·</span>
-              <span class="stats-item">⚡ 首字 {{ (msg as any).stats.firstTokenMs }}ms</span>
+              <span class="stats-item">🧠 {{ (msg as any).stats.model || activeModelLabel }}</span>
             </div>
           </div>
         </div>
@@ -322,7 +346,6 @@ const messages = ref<Array<{ role: string; content: string; streaming?: boolean 
 const streaming = ref(false)
 const backendOnline = ref(false)
 const messagesRef = ref<HTMLElement>()
-const lastQuickAction = ref('')
 const toast = ref('')
 // 工具执行进度：排障过程透明化
 const currentTool = ref('')
@@ -334,6 +357,53 @@ const retryUserId = ref('')
 // ★ 登录状态管理
 const showLogin = ref(!isLoggedIn())
 const currentUser = ref<UserInfo | null>(getUser())
+
+// ★ 当前模型信息（动态徽标 + 切换下拉）
+const activeModelLabel = ref('DeepSeek')      // 当前模型展示名
+const activeModelKey = ref('deepseek')        // 当前模型 key
+const modelOptions = ref<Array<{ key: string; label: string }>>([])  // 可选模型
+const switchingModel = ref(false)
+// 仅 SUPER_ADMIN / TENANT_ADMIN 可切换模型（复用已有角色体系）
+const isAdmin = computed(() => {
+  const r = currentUser.value?.roles || []
+  return r.includes('SUPER_ADMIN') || r.includes('TENANT_ADMIN')
+})
+
+/** 拉取当前模型 + 可选模型列表（header 徽标 + 切换下拉） */
+async function fetchModelInfo() {
+  try {
+    const res = await apiFetch('/api/agent/model')
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.label) activeModelLabel.value = data.label
+    if (data.active) activeModelKey.value = data.active
+    if (Array.isArray(data.models)) modelOptions.value = data.models
+  } catch {
+    // 忽略：保持默认 DeepSeek
+  }
+}
+
+/** 切换对话模型（管理员） */
+async function switchModel(key: string) {
+  if (switchingModel.value || !key) return
+  switchingModel.value = true
+  try {
+    const res = await apiFetch('/api/agent/model/switch?key=' + encodeURIComponent(key), { method: 'POST' })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      showToast('切换失败：' + (d.error || ('HTTP ' + res.status)))
+      return
+    }
+    const data = await res.json()
+    activeModelLabel.value = data.label || key
+    activeModelKey.value = data.active || key
+    showToast('已切换模型：' + (data.label || key) + ' · ReAct')
+  } catch (e) {
+    showToast('切换失败：' + (e as Error).message)
+  } finally {
+    switchingModel.value = false
+  }
+}
 
 // ★ 主题管理：dark / light，根据时间自动切换（6:00-18:00=light）
 type ThemeMode = 'dark' | 'light'
@@ -367,6 +437,7 @@ function handleLoginSuccess(user: UserInfo) {
   backendOnline.value = true
   // 仅当拥有 alarm:read 权限时才拉取告警列表
   if (canViewAlarms.value) fetchAlarms()
+  fetchModelInfo()
   showToast('登录成功，欢迎 ' + user.username)
 }
 
@@ -390,24 +461,44 @@ window.addEventListener('auth:logout', () => {
 const isToolsExpanded = ref(false)
 function toggleTools() { isToolsExpanded.value = !isToolsExpanded.value }
 
-// 快捷操作折叠：默认折叠，腾出空间给告警区域
-const isQuickActionsExpanded = ref(false)
-function toggleQuickActions() { isQuickActionsExpanded.value = !isQuickActionsExpanded.value }
-
 // 历史对话折叠（默认展开）
 const isHistoryExpanded = ref(true)
 function toggleHistory() { isHistoryExpanded.value = !isHistoryExpanded.value }
+
+// 实时告警折叠（默认展开）：折叠后告警区缩为标题高度，历史对话自动上移
+const isAlarmsExpanded = ref(true)
+function toggleAlarms() { isAlarmsExpanded.value = !isAlarmsExpanded.value }
 
 let userId = 'web-user-' + Math.random().toString(36).substring(2, 8)
 // SSE 连接：EventSource 直连后端
 let eventSource: EventSource | null = null
 
-const quickActions = [
-  { icon: '🚨', label: '查看告警', text: '有哪些告警？' },
-  { icon: '🔧', label: 'CPU 排障', text: 'ecs-001 的 CPU 高怎么办？' },
-  { icon: '🧠', label: '内存排查', text: 'ebm-001 是不是内存泄漏？' },
-  { icon: '💰', label: '成本优化', text: 'gpu-002 成本优化建议' }
+/**
+ * 首页欢迎卡片 — 按登录用户权限动态展示
+ * 财务看到账单/成本类，运维看到排障类，无权限的卡片不展示
+ */
+interface WelcomeCard {
+  icon: string
+  title: string
+  desc: string
+  text: string
+  perm: string
+}
+const ALL_WELCOME_CARDS: WelcomeCard[] = [
+  // 运维场景（需 alarm:read 或 agent:chat）
+  { icon: '🚨', title: '查看告警', desc: '查询当前未处理告警列表', text: '有哪些告警？', perm: 'alarm:read' },
+  { icon: '🔧', title: 'CPU 排障', desc: '从告警到 SOP 的完整排障', text: 'ecs-001 的 CPU 高怎么办？', perm: 'agent:chat' },
+  { icon: '🧠', title: '内存排查', desc: '分析内存指标定位泄漏', text: 'ebm-001 是不是内存泄漏？', perm: 'agent:chat' },
+  // 财务/账单场景（需 bill:read）
+  { icon: '💰', title: '成本优化', desc: '基于账单给出优化建议', text: 'gpu-002 成本优化建议', perm: 'bill:read' },
+  { icon: '📊', title: '账单查询', desc: '查询本月资源费用明细', text: '本月账单明细有哪些？', perm: 'bill:read' },
+  { icon: '💳', title: '资源费用', desc: '查询指定资源的费用情况', text: 'ecs-001 这个月花了多少钱？', perm: 'bill:read' },
 ]
+const welcomeCards = computed(() => {
+  const user = currentUser.value
+  if (!user) return []
+  return ALL_WELCOME_CARDS.filter(c => user.permissions.some(p => p.code === c.perm))
+})
 
 // ========== 对话历史管理（localStorage 持久化） ==========
 interface ChatSession {
@@ -415,10 +506,19 @@ interface ChatSession {
   title: string
   messages: Array<{ role: string; content: string; streaming?: boolean }>
   createdAt: number
+  userId?: string
+  username?: string   // ★ 登录用户名，用于按用户隔离历史对话
 }
 const STORAGE_KEY = 'cloud-ops-sessions'
 const currentSessionId = ref('')
-const sessions = ref<ChatSession[]>(loadSessions())
+// ★ 全量会话（本地不做过滤），历史列表按当前登录用户过滤展示
+const allSessions = ref<ChatSession[]>(loadSessions())
+// ★ 按登录用户隔离：不同账号登录只看到自己的历史对话
+const sessions = computed(() => {
+  const uname = currentUser.value?.username
+  if (!uname) return []
+  return allSessions.value.filter(s => s.username === uname)
+})
 
 function loadSessions(): ChatSession[] {
   try {
@@ -427,7 +527,7 @@ function loadSessions(): ChatSession[] {
 }
 function saveSessions() {
   // 只保留 messages 的基本信息（strip streaming flag）
-  const clean = sessions.value.map(s => ({
+  const clean = allSessions.value.map(s => ({
     ...s,
     messages: s.messages.map(m => ({ role: m.role, content: m.content }))
   }))
@@ -442,28 +542,29 @@ function archiveCurrentSession() {
   const firstUser = messages.value.find(m => m.role === 'user')
   const title = firstUser ? (firstUser.content || '').slice(0, 30) : '新对话'
   // 更新已有 session 或新建
-  const existing = sessions.value.find(s => s.id === currentSessionId.value)
+  const existing = allSessions.value.find(s => s.id === currentSessionId.value)
   if (existing) {
     existing.messages = [...messages.value]
     existing.title = title
   } else {
     currentSessionId.value = 'sess-' + Date.now()
-    sessions.value.unshift({
+    allSessions.value.unshift({
       id: currentSessionId.value,
       title,
       messages: [...messages.value],
       createdAt: Date.now(),
       userId: userId,
+      username: currentUser.value?.username || 'unknown',
     })
   }
   // 最多保留 20 条历史
-  if (sessions.value.length > 20) sessions.value = sessions.value.slice(0, 20)
+  if (allSessions.value.length > 20) allSessions.value = allSessions.value.slice(0, 20)
   saveSessions()
 }
 function switchSession(id: string) {
   if (streaming.value) return
   archiveCurrentSession()
-  const s = sessions.value.find(x => x.id === id)
+  const s = allSessions.value.find(x => x.id === id)
   if (s) {
     currentSessionId.value = s.id
     userId = s.userId || userId
@@ -471,7 +572,7 @@ function switchSession(id: string) {
   }
 }
 function deleteSession(id: string) {
-  sessions.value = sessions.value.filter(s => s.id !== id)
+  allSessions.value = allSessions.value.filter(s => s.id !== id)
   if (currentSessionId.value === id) {
     currentSessionId.value = ''
     messages.value = []
@@ -605,7 +706,90 @@ function parseReActSections(raw: string): ReActSection[] {
   }
 
   // 如果没有任何标记，返回原始内容作为 text
-  return sections.length > 0 ? sections : [{ type: 'text', content: raw }]
+  const result = sections.length > 0 ? sections : [{ type: 'text', content: raw }]
+  // ★ 兜底：模型偶发丢失【结论】标记，把结论塞进最后一个【观察】
+  //   若全篇无 conclusion 段，但某个 observation/text 段含结论模板标题（## 排障结论 / ## 查询结果），
+  //   则把标题及其之后内容拆成独立 conclusion 段，前面保留为 observation。
+  return splitLostConclusion(result)
+}
+
+/**
+ * 兜底拆分：模型漏打【结论】标记时，把误入观察结果的结论救回来
+ *
+ * 现象：DeepSeek 长输出或多轮工具调用后，偶尔把最终结论（## 排障结论 / ## 查询结果 模板）
+ *       写进最后一个【观察】段，导致前端没有独立结论卡片（截图3问题）。
+ * 策略：若解析结果里没有 conclusion 段，则从后往前找第一个带结论模板标题的
+ *       observation/text 段，将其按标题位置拆成「observation（前文）+ conclusion（标题起全文）」。
+ */
+function splitLostConclusion(sections: ReActSection[]): ReActSection[] {
+  if (sections.some(s => s.type === 'conclusion')) return sections
+  const CONCL_HEADING = /##\s+(排障结论|查询结果)/
+  for (let i = sections.length - 1; i >= 0; i--) {
+    const sec = sections[i]
+    if ((sec.type === 'observation' || sec.type === 'text') && CONCL_HEADING.test(sec.content)) {
+      const idx = sec.content.search(/##\s+(排障结论|查询结果)/)
+      const obsPart = sec.content.slice(0, idx).trim()
+      const conclPart = sec.content.slice(idx).trim()
+      const out: ReActSection[] = []
+      for (let j = 0; j < sections.length; j++) {
+        if (j === i) {
+          if (obsPart) out.push({ type: sec.type, content: obsPart })
+          out.push({ type: 'conclusion', content: conclPart })
+        } else {
+          out.push(sections[j])
+        }
+      }
+      return out
+    }
+  }
+  return sections
+}
+
+// ========== 结论后收缩中间步骤卡片 ==========
+
+/** 已收缩的消息索引集合（默认全部收缩，有结论时自动触发） */
+const collapsedMessages = ref<Set<number>>(new Set())
+
+/**
+ * 判断一条完成的消息是否可收缩：
+ * 必须同时存在"中间步骤"(thinking/tool/observation) 和"结论"(conclusion)
+ */
+function hasCollapsibleSections(content: string): boolean {
+  const sections = parseReActSections(content)
+  const hasIntermediate = sections.some(s => s.type === 'thinking' || s.type === 'tool' || s.type === 'observation')
+  const hasConclusion = sections.some(s => s.type === 'conclusion')
+  return hasIntermediate && hasConclusion
+}
+
+/** 提取中间步骤（thinking / tool / observation），用于折叠区域 */
+function getIntermediateSections(content: string): ReActSection[] {
+  return parseReActSections(content).filter(s =>
+    s.type === 'thinking' || s.type === 'tool' || s.type === 'observation'
+  )
+}
+
+/** 提取结论/正文段落，始终可见不参与折叠 */
+function getConclusionSections(content: string): ReActSection[] {
+  return parseReActSections(content).filter(s =>
+    s.type === 'conclusion' || s.type === 'text'
+  )
+}
+
+/** 中间步骤数量（显示在折叠触发条上） */
+function getIntermediateCount(content: string): number {
+  return getIntermediateSections(content).length
+}
+
+/** 切换某条消息的展开/收起状态 */
+function toggleExpand(index: number) {
+  const next = new Set(collapsedMessages.value)
+  if (next.has(index)) { next.delete(index) } else { next.add(index) }
+  collapsedMessages.value = next
+}
+
+/** 判断某条消息是否处于展开状态（未收缩=展示完整内容） */
+function isExpanded(index: number): boolean {
+  return !collapsedMessages.value.has(index)
 }
 
 /**
@@ -702,7 +886,6 @@ function newChat() {
   archiveCurrentSession()
   currentSessionId.value = ''
   messages.value = []
-  lastQuickAction.value = ''
   inputText.value = ''
   needsRetry.value = false
   userId = 'web-user-' + Math.random().toString(36).substring(2, 8)  // ★ 新会话 = 新 Memory key
@@ -740,8 +923,7 @@ async function sendMessage(text: string, isRetry = false) {
   needsRetry.value = false
   retryMessage.value = ''
   currentTool.value = ''
-  const matched = quickActions.find(a => a.text === message)
-  lastQuickAction.value = matched ? matched.text : ''
+  const matched = welcomeCards.value.find(c => c.text === message)
   await scrollToBottom()
 
   if (!isRetry) retryMessage.value = message
@@ -773,10 +955,33 @@ async function sendMessage(text: string, isRetry = false) {
         break
       case 'done':
         aiMessage.streaming = false
-        ;(aiMessage as any).stats = { inputTokens: (evt as any).inputTokens || 0, outputTokens: (evt as any).outputTokens || 0, totalTokens: (evt as any).totalTokens || 0, toolCallCount: (evt as any).toolCallCount || 0, firstTokenMs: (evt as any).firstTokenMs || 0 }
+        ;(aiMessage as any).stats = {
+          inputTokens: (evt as any).inputTokens || 0,
+          outputTokens: (evt as any).outputTokens || 0,
+          totalTokens: (evt as any).totalTokens || 0,
+          toolCallCount: (evt as any).toolCallCount || 0,
+          firstTokenMs: (evt as any).firstTokenMs || 0,
+          ragRecallCount: (evt as any).ragRecallCount || 0,
+          ragLatencyMs: (evt as any).ragLatencyMs || 0,
+          toolSuccess: (evt as any).toolSuccess || 0,
+          toolFail: (evt as any).toolFail || 0,
+          model: (evt as any).model || activeModelLabel.value
+        }
         streaming.value = false
         backendOnline.value = true
         currentTool.value = ''
+        // ★ 模型切换提示：若本次响应携带的模型名与当前展示不一致，弹提示并同步徽标
+        if ((evt as any).model && (evt as any).model !== activeModelLabel.value) {
+          activeModelLabel.value = (evt as any).model
+          const opt = modelOptions.value.find(o => o.label === (evt as any).model)
+          if (opt) activeModelKey.value = opt.key
+          showToast('已切换模型：' + (evt as any).model + ' · ReAct')
+        }
+        // ★ 结论后自动收缩中间步骤：有结论+中间步骤的消息默认收起
+        const msgIdx = messages.value.length - 1
+        if (hasCollapsibleSections(aiMessage.content)) {
+          collapsedMessages.value = new Set([...collapsedMessages.value, msgIdx])
+        }
         archiveCurrentSession()
         eventSource?.close()
         eventSource = null
@@ -795,7 +1000,7 @@ async function sendMessage(text: string, isRetry = false) {
       needsRetry.value = true
       aiMessage.streaming = false
       if (aiMessage.content === '') {
-        aiMessage.content = '> ⚠️ 连接失败，请确认后端服务已启动（localhost:8080）'
+        aiMessage.content = '> ⚠️ 连接已断开，未收到任何响应。\n> 请检查：① 后端是否运行在 localhost:8080；② 浏览器控制台是否有 CORS / 401 报错；③ 当前账号是否有 agent:chat 权限。'
         backendOnline.value = false
         needsRetry.value = false
       }
@@ -953,7 +1158,15 @@ async function fetchAlarms() {
     const res = await apiFetch('/api/alarms?limit=10')
     if (!res.ok) throw new Error('HTTP ' + res.status)
     const data = await res.json()
-    alarms.value = data.alarms || []
+    alarms.value = (data.alarms || []).sort((a: Alarm, b: Alarm) => {
+      // 严重级别优先：CRITICAL > WARNING > INFO（兜底排序，与后端一致）
+      const order: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 }
+      const pa = order[(a.severity || '').toUpperCase()] ?? 99
+      const pb = order[(b.severity || '').toUpperCase()] ?? 99
+      if (pa !== pb) return pa - pb
+      // 同级别按时间倒序
+      return new Date(b.triggerTime).getTime() - new Date(a.triggerTime).getTime()
+    })
   } catch (err) {
     console.error('告警加载失败:', err)
   } finally {
@@ -1041,12 +1254,18 @@ onMounted(async () => {
   window.addEventListener('keydown', onGlobalShortcut)
   // 已登录且有 alarm:read 权限才拉取告警列表（未登录时 LoginModal 成功后会按权限自动拉取）
   if (isLoggedIn() && canViewAlarms.value) fetchAlarms()
-  try {
-    const res = await fetch('/health')
-    if (res.ok) backendOnline.value = true
-  } catch {
-    backendOnline.value = false
+  if (isLoggedIn()) fetchModelInfo()
+  // 后端健康检查（actuator 路径 + 定时轮询）
+  async function checkHealth() {
+    try {
+      const res = await fetch('/actuator/health')
+      backendOnline.value = res.ok
+    } catch {
+      backendOnline.value = false
+    }
   }
+  checkHealth()
+  setInterval(checkHealth, 15000) // 每15秒自动检测
 })
 
 /** 全局快捷键：Ctrl+K 新建对话 · Ctrl+/ 聚焦输入框 · Ctrl+Enter 发送 */
@@ -1096,6 +1315,43 @@ function onGlobalShortcut(e: KeyboardEvent) {
   transform: scale(1.05);
 }
 
+/* ========== 模型切换下拉（管理员） ========== */
+.model-select {
+  height: 30px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  color: var(--text-secondary, #c7ccde);
+  font-size: 12px;
+  padding: 0 6px;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+.model-select:hover:not(:disabled) {
+  border-color: var(--glass-border-strong, rgba(255, 255, 255, 0.14));
+}
+.model-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========== 后端连接状态（header 行内） ========== */
+.conn-status {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #6b7088;
+  flex-shrink: 0;
+  margin-left: 10px;
+  margin-right: 4px;
+  transition: background 0.3s;
+}
+.conn-status.online {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34,197,94,0.4);
+}
+
 /* ========== 消息计数（未登录时显示） ========== */
 .msg-count {
   font-size: 12px;
@@ -1126,5 +1382,51 @@ function onGlobalShortcut(e: KeyboardEvent) {
 }
 .section-header h3 .alarm-count-badge {
   font-size: 13px;
+}
+
+/* ========== 结论后收缩：中间步骤折叠区 ========== */
+.react-collapse-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  margin-bottom: 8px;
+  border-radius: 20px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  color: #6366f1;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  transition: all 0.25s ease;
+  line-height: 1.4;
+}
+.react-collapse-trigger:hover {
+  background: rgba(99, 102, 241, 0.14);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+.react-collapse-trigger .collapse-gem {
+  font-size: 14px;
+  letter-spacing: -1px;
+}
+.react-collapse-trigger .collapse-label {
+  font-weight: 500;
+}
+.react-collapse-trigger .collapse-count {
+  color: #94a3b8;
+  font-size: 12px;
+}
+.react-collapse-trigger .collapse-arrow {
+  transition: transform 0.2s ease;
+  font-size: 11px;
+  margin-left: 2px;
+}
+.react-collapse-trigger.expanded .collapse-arrow {
+  transform: rotate(0deg); /* ▾ already points down */
+}
+
+/* 折叠内容区：展开时有动画 */
+.react-collapse-body {
+  overflow: hidden;
 }
 </style>

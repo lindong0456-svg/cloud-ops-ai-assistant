@@ -1,7 +1,10 @@
 package com.cloudops.rag;
 
+import com.cloudops.observability.RequestMetrics;
+import com.cloudops.security.context.RequestContextStore;
 import com.cloudops.security.context.SecurityContext;
 import com.cloudops.security.context.UserContext;
+import com.cloudops.tool.RequestContextHolder;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -12,6 +15,7 @@ import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.filter.Filter;
 import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,6 +56,7 @@ public class KnowledgeRetrievalService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
     private final RerankService rerankService;
+    private final MeterRegistry meterRegistry;
 
     @Value("${rag.top-k:5}")
     private int topK;
@@ -227,7 +232,39 @@ public class KnowledgeRetrievalService {
 
         long costMs = System.currentTimeMillis() - startTime;
         log.info("[RAG] 混合检索完成, query='{}', 融合后{}条, 耗时{}ms", query, result.size(), costMs);
+
+        // ★ 可观测性：累加本次请求的 RAG 指标（done 事件回传前端）+ 打 Micrometer（Grafana）
+        String uid = resolveUserId();
+        RequestMetrics.recordRag(uid, result.size(), costMs, fused.size(), rerankTopK);
+        if (meterRegistry != null) {
+            meterRegistry.timer("rag.call.duration").record(java.time.Duration.ofMillis(costMs));
+            meterRegistry.counter("rag.recall.chunks").increment(result.size());
+        }
         return result;
+    }
+
+    /**
+     * 解析当前请求的 userId（跨线程兼容）
+     *
+     * 优先级：
+     *   1. RequestContextHolder（HTTP 线程直接可用）
+     *   2. SecurityContext（HTTP 线程 ThreadLocal）
+     *   3. RequestContextStore 兜底（跨线程 ConcurrentHashMap，工具在线程池执行时走这里）
+     */
+    private String resolveUserId() {
+        // 1. HTTP 线程：ThreadLocal 直取
+        String uid = RequestContextHolder.getCurrentUserId();
+        if (uid != null) return uid;
+
+        // 2. HTTP 线程备用：SecurityContext ThreadLocal
+        UserContext u = SecurityContext.get();
+        if (u != null) return u.userId();
+
+        // 3. 异步线程兜底：从 RequestContextStore 取第一个活跃上下文（与 DataPermissionInterceptor 一致）
+        for (UserContext ctx : RequestContextStore.getAll()) {
+            return ctx.userId();
+        }
+        return null;
     }
 
     /**

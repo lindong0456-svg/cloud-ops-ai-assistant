@@ -1,4 +1,5 @@
 {
+  "uid": "cloudops",
   "dashboard": {
     "title": "云运维智能助手 · 可观测性",
     "uid": "cloudops",
@@ -8,32 +9,65 @@
         "title": "LLM Token 消耗",
         "type": "stat",
         "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
-        "targets": [{"expr": "llm_token_total","legendFormat": "总 Token"}],
-        "fieldConfig": {"defaults": {"unit": "short","decimals":0}}
+        "targets": [{"expr": "llm_token_total", "legendFormat": "总 Token"}],
+        "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}}
       },
       {
-        "title": "工具调用次数",
+        "title": "工具调用次数 (按工具)",
         "type": "stat",
         "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
-        "targets": [{"expr": "tool_call_total","legendFormat": "工具调用"}],
-        "fieldConfig": {"defaults": {"unit": "short","decimals":0}}
+        "targets": [
+          {
+            "expr": "sum by (tool) (tool_call_total)",
+            "legendFormat": "{{tool}}"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+        "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "graphMode": "none"}
+      },
+      {
+        "title": "RAG 检索命中数",
+        "type": "stat",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 4},
+        "targets": [
+          {
+            "expr": "increase(rag_recall_chunks_total[15m])",
+            "legendFormat": "近15分钟召回文档"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}}
       },
       {
         "title": "LLM Token 消耗趋势",
         "type": "timeseries",
         "gridPos": {"x": 0, "y": 4, "w": 16, "h": 10},
         "targets": [
-          {"expr": "rate(llm_token_input_total[1m])","legendFormat": "Input/s"},
-          {"expr": "rate(llm_token_output_total[1m])","legendFormat": "Output/s"}
+          {"expr": "rate(llm_token_input_total[1m])", "legendFormat": "Input/s"},
+          {"expr": "rate(llm_token_output_total[1m])", "legendFormat": "Output/s"}
         ],
         "fieldConfig": {"defaults": {"unit": "short"}}
       },
       {
-        "title": "工具调用耗时分布",
+        "title": "工具调用耗时分布 (P95 / 按工具)",
         "type": "timeseries",
-        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 14},
+        "gridPos": {"x": 16, "y": 4, "w": 8, "h": 10},
         "targets": [
-          {"expr": "rate(tool_call_duration_seconds_sum[30s]) / rate(tool_call_duration_seconds_count[30s])","legendFormat": "平均耗时(秒)"}
+          {
+            "expr": "histogram_quantile(0.95, sum by (le, tool) (increase(tool_call_duration_seconds_bucket[30s])))",
+            "legendFormat": "{{tool}} P95"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "RAG 检索耗时",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 14, "w": 24, "h": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (increase(rag_call_duration_seconds_bucket[1m])))",
+            "legendFormat": "RAG P95 耗时(秒)"
+          }
         ],
         "fieldConfig": {"defaults": {"unit": "s"}}
       }

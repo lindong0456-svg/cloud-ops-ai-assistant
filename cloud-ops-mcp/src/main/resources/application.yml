@@ -16,4 +16,4 @@ mybatis-plus:
 logging:
   level:
     root: WARN
-    com.cloudops: INFO
+    com.cloudops: debug

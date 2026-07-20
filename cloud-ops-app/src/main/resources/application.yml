@@ -38,21 +38,36 @@ spring:
       - "classpath:tools-config.yml"
 
 # ===========================================
-# 大模型配置
-# 对话模型：DeepSeek（OpenAI 兼容格式）
-# 向量模型：阿里云百炼 text-embedding-v4（DashScope，OpenAI 兼容格式）
-# key 都用环境变量，绝不硬编码
+# 大模型配置（配置驱动的模型注册表，支持运行时切换）
+#   - app.active-model: 当前激活模型 key
+#   - app.models[]:     候选模型列表（deepseek / qwen-vl 等 OpenAI 兼容端点）
+#   切换模型无需改代码：POST /api/agent/model/switch?key=xxx（仅管理员）
+#   向量模型仍为阿里云百炼 text-embedding-v4（见下方 langchain4j.open-ai.embedding-model）
 # ===========================================
-langchain4j:
-  open-ai:
-    chat-model:
+app:
+  active-model: deepseek
+  models:
+    - key: deepseek
+      label: DeepSeek
+      provider: openai
       api-key: ${DEEPSEEK_API_KEY}
       base-url: https://api.deepseek.com
       model-name: deepseek-v4-pro
       temperature: 0.7
       max-tokens: 4096
-      log-requests: true
-      log-responses: false
+    - key: qwen-vl
+      label: 通义千问 VL
+      provider: dashscope
+      api-key: ${DASHSCOPE_API_KEY}
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model-name: qwen-vl-max
+      temperature: 0.7
+      max-tokens: 4096
+
+langchain4j:
+  open-ai:
+    # 对话模型已迁移到上方 app.models（配置驱动 + 可切换）
+    # 此处仅保留向量模型配置（RAG  embedding 用）
     embedding-model:
       api-key: ${DASHSCOPE_API_KEY}
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -95,6 +110,18 @@ management:
       exposure:
         include: health,metrics,prometheus
   metrics:
+    # ★ Timer 输出 Histogram 分桶数据（Grafana 耗时分布面板需要 _bucket 标签）
+    #   不配这个的话，Timer 默认用 Summary 格式（只有 count/sum/quantile），
+    #   Grafana 的 histogram_quantile() 查 bucket 会返回空 → "耗时分布" 面板空白
+    distribution:
+      percentiles-histogram:
+        tool.call.duration: true
+        rag.call.duration: true
+      # SLO 分桶边界（毫秒 → Prometheus 自动转 seconds）
+      #   覆盖 10ms ~ 30s 范围，适合工具调用和 RAG 检索的耗时分布
+      slo:
+        tool.call.duration: 10ms,50ms,100ms,250ms,500ms,1s,3s,5s,10s,30s
+        rag.call.duration: 10ms,50ms,100ms,250ms,500ms,1s,3s,5s,10s,30s
     export:
       prometheus:
         enabled: true

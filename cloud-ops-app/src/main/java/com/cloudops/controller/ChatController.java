@@ -1,7 +1,8 @@
 package com.cloudops.controller;
 
-import com.cloudops.agent.OpsAssistant;
+import com.cloudops.config.ModelManager;
 import com.cloudops.guardrail.InputGuardrail;
+import com.cloudops.observability.RequestMetrics;
 import com.cloudops.security.context.RequestContextStore;
 import com.cloudops.security.context.SecurityContext;
 import com.cloudops.security.context.UserContext;
@@ -16,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -42,7 +45,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @RequiredArgsConstructor
 public class ChatController {
 
-    private final OpsAssistant opsAssistant;
+    private final ModelManager modelManager;
     private final InputGuardrail inputGuardrail;
     private final ObjectMapper objectMapper;
 
@@ -69,7 +72,7 @@ public class ChatController {
         }
 
         try {
-            String reply = opsAssistant.chat(userId, message);
+            String reply = modelManager.getOpsAssistant().chat(userId, message);
             long costMs = System.currentTimeMillis() - startTime;
             log.info("[Chat] Agent 响应完成, userId={}, 耗时={}ms", userId, costMs);
             return Map.of("status", "success", "userId", userId, "reply", reply, "costMs", costMs);
@@ -100,7 +103,7 @@ public class ChatController {
             return "[护轨拦截] 命中敏感词: " + guardrailResult.getHitKeyword() + "\n\n" + guardrailResult.getMessage();
         }
         try {
-            return opsAssistant.chat(userId, message);
+            return modelManager.getOpsAssistant().chat(userId, message);
         } catch (Exception e) {
             return "[Agent 调用失败] " + e.getMessage();
         }
@@ -167,7 +170,8 @@ public class ChatController {
             @RequestParam String message,
             HttpServletResponse response
     ) throws Exception {
-        log.info("[Chat-SSE] 流式请求 userId={}, message={}", userId, truncate(message));
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        log.info("[Chat-SSE] 流式请求 userId={}, loginUser={}, message={}", userId, auth != null ? auth.getName() : "(匿名)", truncate(message));
 
         // ★ 禁用 Tomcat response buffer（必须在 getOutputStream() 前）
         response.setBufferSize(0);
@@ -203,6 +207,9 @@ public class ChatController {
                 log.debug("[Chat-SSE] 已传播安全上下文: userId={}, user={}", userId, currentUser.username());
             }
 
+            // ★ 初始化本次请求的可观测性指标快照（done 事件时回传前端）
+            RequestMetrics.create(userId);
+
             // 2. TokenStream → Flux.create() 桥接 + 工具执行事件
             CountDownLatch latch = new CountDownLatch(1);
             AtomicBoolean hasError = new AtomicBoolean(false);
@@ -210,7 +217,7 @@ public class ChatController {
             AtomicLong firstTokenTime = new AtomicLong();
             AtomicReference<TokenUsage> finalTokenUsage = new AtomicReference<>();
 
-            TokenStream tokenStream = opsAssistant.chatStream(userId, message);
+            TokenStream tokenStream = modelManager.getOpsAssistant().chatStream(userId, message);
 
             // ★ 注册工具执行回调 — 排障过程透明化的关键
             tokenStream.onToolExecuted((ToolExecution toolExecution) -> {
@@ -250,28 +257,18 @@ public class ChatController {
                     .doOnError(error -> {
                         log.error("[Chat-SSE] 流式异常, userId={}", userId, error);
                         writeSseEvent(out, "error", Map.of("message", error.getMessage()));
-                        Map<String, Object> doneFields = new LinkedHashMap<>();
-                        TokenUsage tu = finalTokenUsage.get();
-                        doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
-                        doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
-                        doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
-                        doneFields.put("toolCallCount", toolCallCount.get());
-                        long ft = firstTokenTime.get();
-                        doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                        Map<String, Object> doneFields = buildDoneFields(
+                                finalTokenUsage.get(), userId, toolCallCount.get(),
+                                firstTokenTime.get() > 0 ? firstTokenTime.get() - requestStartTime : 0);
                         writeSseEvent(out, "done", doneFields);
                         hasError.set(true);
                         latch.countDown();
                     })
                     .doOnComplete(() -> {
                         log.info("[Chat-SSE] 流式完成, userId={}", userId);
-                        Map<String, Object> doneFields = new LinkedHashMap<>();
-                        TokenUsage tu = finalTokenUsage.get();
-                        doneFields.put("inputTokens", tu != null ? (tu.inputTokenCount() != null ? tu.inputTokenCount() : 0) : 0);
-                        doneFields.put("outputTokens", tu != null ? (tu.outputTokenCount() != null ? tu.outputTokenCount() : 0) : 0);
-                        doneFields.put("totalTokens", tu != null ? (tu.totalTokenCount() != null ? tu.totalTokenCount() : 0) : 0);
-                        doneFields.put("toolCallCount", toolCallCount.get());
-                        long ft = firstTokenTime.get();
-                        doneFields.put("firstTokenMs", ft > 0 ? ft - requestStartTime : 0);
+                        Map<String, Object> doneFields = buildDoneFields(
+                                finalTokenUsage.get(), userId, toolCallCount.get(),
+                                firstTokenTime.get() > 0 ? firstTokenTime.get() - requestStartTime : 0);
                         writeSseEvent(out, "done", doneFields);
                         latch.countDown();
                     })
@@ -303,7 +300,8 @@ public class ChatController {
             writeSseEvent(out, "error", Map.of("message", "Agent 调用异常: " + e.getMessage()));
             writeSseEvent(out, "done", Map.of());
         } finally {
-            // ★ 清理请求级安全上下文（无论成功/异常都执行）
+            // ★ 清理请求级安全上下文与可观测指标（无论成功/异常都执行）
+            RequestMetrics.remove(userId);
             RequestContextStore.remove(userId);
             RequestContextHolder.clear();
         }
@@ -322,6 +320,29 @@ public class ChatController {
         } catch (Exception e) {
             log.error("[Chat-SSE] SSE写入失败: type={}", type, e);
         }
+    }
+
+    /**
+     * 组装 done 事件的统计字段：token 用量 + 工具调用数 + 本次请求可观测明细(RAG/工具) + 当前模型名
+     * 前端 stats-bar 据此展示；model 字段用于前端检测模型切换并弹提示。
+     */
+    private Map<String, Object> buildDoneFields(TokenUsage tu, String userId, int toolCallCount, long firstTokenMs) {
+        Map<String, Object> doneFields = new LinkedHashMap<>();
+        doneFields.put("inputTokens", tu != null && tu.inputTokenCount() != null ? tu.inputTokenCount() : 0);
+        doneFields.put("outputTokens", tu != null && tu.outputTokenCount() != null ? tu.outputTokenCount() : 0);
+        doneFields.put("totalTokens", tu != null && tu.totalTokenCount() != null ? tu.totalTokenCount() : 0);
+        doneFields.put("toolCallCount", toolCallCount);
+        doneFields.put("firstTokenMs", firstTokenMs);
+        // 本次请求的可观测明细（RAG 召回数 / 工具成功失败）
+        RequestMetrics.Snapshot metrics = RequestMetrics.get(userId);
+        if (metrics != null) {
+            doneFields.putAll(metrics.toMap());
+        }
+        // 当前激活模型名（前端徽标 + 切换提示）
+        if (modelManager.getActiveDef() != null) {
+            doneFields.put("model", modelManager.getActiveDef().getLabel());
+        }
+        return doneFields;
     }
 
     private String truncate(String s) {
